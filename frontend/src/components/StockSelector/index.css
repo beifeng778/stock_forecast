@@ -13,8 +13,55 @@
 .selector-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   margin-bottom: 16px;
+}
+
+.stock-count {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 60px 0;
+  flex: 1;
+  gap: 16px;
+}
+
+.loading-text {
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.refresh-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.1);
+  color: #818cf8;
+  transition: all 0.2s ease;
+}
+
+.refresh-btn:hover {
+  border-color: rgba(99, 102, 241, 0.8);
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+.refresh-btn:disabled {
+  border-color: rgba(99, 102, 241, 0.2);
+  background: rgba(99, 102, 241, 0.05);
+  color: #64748b;
 }
 
 .selector-header h3 {
@@ -118,4 +165,30 @@
 
 .selector-actions .ant-btn-primary:hover {
   background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+}
+
+@media (max-width: 768px) {
+  .stock-selector {
+    padding: 14px;
+  }
+
+  .selector-header h3 {
+    font-size: 14px;
+  }
+
+  .selected-stocks {
+    min-height: 150px;
+  }
+
+  .stock-item {
+    padding: 10px;
+  }
+
+  .stock-code {
+    font-size: 13px;
+  }
+
+  .stock-name {
+    font-size: 13px;
+  }
 }

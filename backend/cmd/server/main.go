@@ -47,17 +47,25 @@ func main() {
 	// 注册路由
 	api := r.Group("/api")
 	{
-		// 股票相关
-		api.GET("/stocks", handler.GetStocks)
-		api.GET("/stocks/:code/kline", handler.GetKline)
-		api.GET("/stocks/:code/indicators", handler.GetIndicators)
-		api.GET("/stocks/:code/news", handler.GetNews)
+		// 认证相关（不需要token）
+		api.POST("/auth/verify", handler.VerifyInviteCode)
 
-		// 预测相关
-		api.POST("/predict", handler.Predict)
+		// 需要认证的路由
+		protected := api.Group("")
+		protected.Use(handler.AuthMiddleware())
+		{
+			// 股票相关
+			protected.GET("/stocks", handler.GetStocks)
+			protected.GET("/stocks/:code/kline", handler.GetKline)
+			protected.GET("/stocks/:code/indicators", handler.GetIndicators)
+			protected.GET("/stocks/:code/news", handler.GetNews)
 
-		// 委托模拟
-		api.POST("/trade/simulate", handler.SimulateTrade)
+			// 预测相关
+			protected.POST("/predict", handler.Predict)
+
+			// 委托模拟
+			protected.POST("/trade/simulate", handler.SimulateTrade)
+		}
 	}
 
 	port := os.Getenv("PORT")

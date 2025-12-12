@@ -15,6 +15,29 @@ const api = axios.create({
   timeout: 60000,
 });
 
+// 请求拦截器：添加 token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// 响应拦截器：处理 401 错误
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // token 无效或过期，清除本地存储并刷新页面
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('invite_verified');
+      window.location.reload();
+    }
+    return Promise.reject(error);
+  }
+);
+
 // 获取股票列表
 export async function getStocks(keyword?: string): Promise<Stock[]> {
   const response = await api.get('/stocks', {
@@ -40,6 +63,12 @@ export async function predict(request: PredictRequest): Promise<PredictResponse>
 // 委托模拟
 export async function simulateTrade(request: TradeSimulateRequest): Promise<TradeSimulateResponse> {
   const response = await api.post('/trade/simulate', request);
+  return response.data;
+}
+
+// 验证邀请码
+export async function verifyInviteCode(code: string): Promise<{ success: boolean; message: string; token?: string }> {
+  const response = await api.post('/auth/verify', { code });
   return response.data;
 }
 

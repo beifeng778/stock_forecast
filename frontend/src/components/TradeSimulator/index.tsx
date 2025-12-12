@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   Form,
   Select,
@@ -13,13 +13,19 @@ import {
   message,
   Empty,
   Tabs,
-} from 'antd';
-import { ArrowUpOutlined, ArrowDownOutlined, SmileOutlined, MehOutlined, FrownOutlined } from '@ant-design/icons';
-import dayjs, { Dayjs } from 'dayjs';
-import { useStockStore } from '../../store';
-import { simulateTrade, getKline } from '../../services/api';
-import type { TradeSimulateResponse, ScenarioResult, KlineData } from '../../types';
-import './index.css';
+} from "antd";
+import {
+  ArrowUpOutlined,
+  ArrowDownOutlined,
+  SmileOutlined,
+  MehOutlined,
+  FrownOutlined,
+} from "@ant-design/icons";
+import dayjs, { Dayjs } from "dayjs";
+import { useStockStore } from "../../store";
+import { simulateTrade, getKline } from "../../services/api";
+import type { ScenarioResult, KlineData } from "../../types";
+import "./index.css";
 
 // 判断是否为工作日（周一到周五）
 const isWorkday = (date: Dayjs): boolean => {
@@ -36,9 +42,9 @@ const isMarketClosed = (): boolean => {
 
 // 判断日期是否为未来（考虑收盘时间）
 const isFutureDate = (date: Dayjs): boolean => {
-  const today = dayjs().startOf('day');
-  if (date.isAfter(today, 'day')) return true;
-  if (date.isSame(today, 'day') && !isMarketClosed()) return true;
+  const today = dayjs().startOf("day");
+  if (date.isAfter(today, "day")) return true;
+  if (date.isSame(today, "day") && !isMarketClosed()) return true;
   return false;
 };
 
@@ -48,26 +54,59 @@ const getNextWorkdays = (count: number): Dayjs[] => {
   // 如果今天未收盘且是工作日，今天也算未来
   let current = dayjs();
   if (isMarketClosed() || !isWorkday(current)) {
-    current = current.add(1, 'day');
+    current = current.add(1, "day");
   }
   while (workdays.length < count) {
     if (isWorkday(current)) {
       workdays.push(current);
     }
-    current = current.add(1, 'day');
+    current = current.add(1, "day");
   }
   return workdays;
 };
 
 const TradeSimulator: React.FC = () => {
   const [form] = Form.useForm();
-  const { predictions, predictedCodes, predictionKlines } = useStockStore();
-  const [result, setResult] = useState<TradeSimulateResponse | null>(null);
+  const {
+    predictions,
+    predictedCodes,
+    predictionKlines,
+    tradeFormData,
+    setTradeFormData,
+    tradeResult,
+    setTradeResult,
+    tradeHasFutureDate,
+    setTradeHasFutureDate,
+  } = useStockStore();
   const [loading, setLoading] = useState(false);
-  const [hasFutureDate, setHasFutureDate] = useState(false); // 是否包含未来日期
 
   // 历史K线数据缓存
   const historyKlinesRef = useRef<Record<string, KlineData[]>>({});
+
+  // 恢复保存的表单数据
+  useEffect(() => {
+    // 只有当保存的股票代码在当前预测列表中时才恢复股票选择
+    const stockCodeValid =
+      tradeFormData.stock_code &&
+      predictions.some((p) => p.stock_code === tradeFormData.stock_code);
+
+    // 恢复所有保存的表单数据
+    const fieldsToRestore: Record<string, any> = {};
+
+    if (stockCodeValid) {
+      fieldsToRestore.stock_code = tradeFormData.stock_code;
+    }
+    if (tradeFormData.buy_price !== undefined) {
+      fieldsToRestore.buy_price = tradeFormData.buy_price;
+    }
+    if (tradeFormData.expected_price !== undefined) {
+      fieldsToRestore.expected_price = tradeFormData.expected_price;
+    }
+
+    if (Object.keys(fieldsToRestore).length > 0) {
+      form.setFieldsValue(fieldsToRestore);
+    }
+  }, [predictions]);
 
   // 计算未来5个工作日的最后一天
   const allowedWorkdays = useMemo(() => getNextWorkdays(5), []);
@@ -76,7 +115,7 @@ const TradeSimulator: React.FC = () => {
   // 禁用日期：过去到未来5个工作日，周末不可选
   const disabledDate = (current: Dayjs): boolean => {
     if (!current) return false;
-    if (current.isAfter(maxSellDate, 'day')) return true;
+    if (current.isAfter(maxSellDate, "day")) return true;
     return !isWorkday(current);
   };
 
@@ -88,20 +127,28 @@ const TradeSimulator: React.FC = () => {
 
   // 计算盈亏
   const handleCalculate = async (values: any) => {
-    const prediction = predictions.find((p) => p.stock_code === values.stock_code);
-    if (!prediction) {
-      message.error('未找到该股票的预测结果');
+    // 校验买入日期和卖出日期不能同一天
+    if (values.buy_date.isSame(values.sell_date, "day")) {
+      message.error("买入日期和卖出日期不能是同一天");
       return;
     }
 
-    const sellDateStr = values.sell_date.format('YYYY-MM-DD');
+    const prediction = predictions.find(
+      (p) => p.stock_code === values.stock_code
+    );
+    if (!prediction) {
+      message.error("未找到该股票的预测结果");
+      return;
+    }
+
+    const sellDateStr = values.sell_date.format("YYYY-MM-DD");
     const klines = predictionKlines[values.stock_code] || [];
     const targetKline = klines.find((k) => k.date === sellDateStr);
 
     // 判断是否包含未来日期
     const buyIsFuture = isFutureDate(values.buy_date);
     const sellIsFuture = isFutureDate(values.sell_date);
-    setHasFutureDate(buyIsFuture || sellIsFuture);
+    setTradeHasFutureDate(buyIsFuture || sellIsFuture);
 
     // 从预测K线获取对应日期的价格
     let predictedHigh: number;
@@ -124,7 +171,7 @@ const TradeSimulator: React.FC = () => {
       const response = await simulateTrade({
         stock_code: values.stock_code,
         buy_price: values.buy_price,
-        buy_date: values.buy_date.format('YYYY-MM-DD'),
+        buy_date: values.buy_date.format("YYYY-MM-DD"),
         expected_price: values.expected_price,
         predicted_high: predictedHigh,
         predicted_close: predictedClose,
@@ -134,10 +181,10 @@ const TradeSimulator: React.FC = () => {
         sell_date: sellDateStr,
         quantity: values.quantity,
       });
-      setResult(response);
+      setTradeResult(response);
     } catch (error) {
-      console.error('计算失败:', error);
-      message.error('计算失败，请稍后重试');
+      console.error("计算失败:", error);
+      message.error("计算失败，请稍后重试");
     } finally {
       setLoading(false);
     }
@@ -149,29 +196,33 @@ const TradeSimulator: React.FC = () => {
       return historyKlinesRef.current[code];
     }
     try {
-      const response = await getKline(code, 'daily');
+      const response = await getKline(code, "daily");
       historyKlinesRef.current[code] = response.data || [];
       return historyKlinesRef.current[code];
     } catch (error) {
-      console.error('加载历史K线失败:', error);
+      console.error("加载历史K线失败:", error);
       return [];
     }
   };
 
   // 根据日期获取K线价格（同时支持历史和预测K线）
-  const getPriceByDate = (code: string, dateStr: string, priceType: 'open' | 'close'): number | null => {
+  const getPriceByDate = (
+    code: string,
+    dateStr: string,
+    priceType: "open" | "close"
+  ): number | null => {
     // 先从预测K线中查找
     const predKlines = predictionKlines[code] || [];
     const predKline = predKlines.find((k) => k.date === dateStr);
     if (predKline) {
-      return priceType === 'open' ? predKline.open : predKline.close;
+      return priceType === "open" ? predKline.open : predKline.close;
     }
 
     // 再从历史K线中查找
     const histKlines = historyKlinesRef.current[code] || [];
     const histKline = histKlines.find((k) => k.date === dateStr);
     if (histKline) {
-      return priceType === 'open' ? histKline.open : histKline.close;
+      return priceType === "open" ? histKline.open : histKline.close;
     }
 
     return null;
@@ -184,23 +235,23 @@ const TradeSimulator: React.FC = () => {
       // 先加载历史K线数据
       await loadHistoryKlines(code);
 
-      const buyDate = form.getFieldValue('buy_date');
-      const sellDate = form.getFieldValue('sell_date');
+      const buyDate = form.getFieldValue("buy_date");
+      const sellDate = form.getFieldValue("sell_date");
 
       let buyPrice = prediction.current_price;
       let expectedPrice = prediction.target_prices.short;
 
       // 如果已选择买入日期，使用该日期的开盘价
       if (buyDate) {
-        const dateStr = buyDate.format('YYYY-MM-DD');
-        const price = getPriceByDate(code, dateStr, 'open');
+        const dateStr = buyDate.format("YYYY-MM-DD");
+        const price = getPriceByDate(code, dateStr, "open");
         if (price !== null) buyPrice = price;
       }
 
       // 如果已选择卖出日期，使用该日期的收盘价
       if (sellDate) {
-        const dateStr = sellDate.format('YYYY-MM-DD');
-        const price = getPriceByDate(code, dateStr, 'close');
+        const dateStr = sellDate.format("YYYY-MM-DD");
+        const price = getPriceByDate(code, dateStr, "close");
         if (price !== null) expectedPrice = price;
       }
 
@@ -214,14 +265,14 @@ const TradeSimulator: React.FC = () => {
   // 选择买入日期时自动设置买入价格为开盘价
   const handleBuyDateChange = async (date: Dayjs | null) => {
     if (!date) return;
-    const code = form.getFieldValue('stock_code');
+    const code = form.getFieldValue("stock_code");
     if (!code) return;
 
     // 确保历史K线已加载
     await loadHistoryKlines(code);
 
-    const dateStr = date.format('YYYY-MM-DD');
-    const buyPrice = getPriceByDate(code, dateStr, 'open');
+    const dateStr = date.format("YYYY-MM-DD");
+    const buyPrice = getPriceByDate(code, dateStr, "open");
     if (buyPrice !== null) {
       form.setFieldsValue({ buy_price: buyPrice });
     }
@@ -230,26 +281,36 @@ const TradeSimulator: React.FC = () => {
   // 选择卖出日期时自动设置预期卖出价格为收盘价
   const handleSellDateChange = async (date: Dayjs | null) => {
     if (!date) return;
-    const code = form.getFieldValue('stock_code');
+    const code = form.getFieldValue("stock_code");
     if (!code) return;
 
     // 确保历史K线已加载
     await loadHistoryKlines(code);
 
-    const dateStr = date.format('YYYY-MM-DD');
-    const expectedPrice = getPriceByDate(code, dateStr, 'close');
+    const dateStr = date.format("YYYY-MM-DD");
+    const expectedPrice = getPriceByDate(code, dateStr, "close");
     if (expectedPrice !== null) {
       form.setFieldsValue({ expected_price: expectedPrice });
     }
   };
 
   // 渲染场景结果
-  const renderScenario = (scenario: ScenarioResult, label: string, icon: React.ReactNode, color: string) => (
+  const renderScenario = (
+    scenario: ScenarioResult,
+    label: string,
+    icon: React.ReactNode,
+    color: string,
+    showProbability: boolean = true
+  ) => (
     <Card size="small" className="scenario-card" style={{ borderColor: color }}>
       <div className="scenario-header" style={{ color }}>
         {icon}
         <span>{label}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 12, opacity: 0.8 }}>概率: {scenario.probability}</span>
+        {showProbability && (
+          <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.8 }}>
+            概率: {scenario.probability}
+          </span>
+        )}
       </div>
       <Row gutter={8}>
         <Col span={8}>
@@ -277,17 +338,19 @@ const TradeSimulator: React.FC = () => {
             precision={2}
             valueStyle={{
               fontSize: 16,
-              color: scenario.profit >= 0 ? '#cf1322' : '#3f8600',
+              color: scenario.profit >= 0 ? "#cf1322" : "#3f8600",
             }}
-            prefix={scenario.profit >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
+            prefix={
+              scenario.profit >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />
+            }
             suffix={`(${scenario.profit_rate})`}
           />
         </Col>
       </Row>
       <div className="scenario-fees">
-        卖出费用: 佣金 {scenario.fees.sell_commission.toFixed(2)}元 |
-        印花税 {scenario.fees.stamp_tax.toFixed(2)}元 |
-        过户费 {scenario.fees.transfer_fee.toFixed(2)}元
+        卖出费用: 佣金 {scenario.fees.sell_commission.toFixed(2)}元 | 印花税{" "}
+        {scenario.fees.stamp_tax.toFixed(2)}元 | 过户费{" "}
+        {scenario.fees.transfer_fee.toFixed(2)}元
       </div>
     </Card>
   );
@@ -315,16 +378,31 @@ const TradeSimulator: React.FC = () => {
           form={form}
           layout="vertical"
           onFinish={handleCalculate}
+          onValuesChange={(_, allValues) => {
+            // 保存表单数据到 store（日期转为字符串）
+            setTradeFormData({
+              stock_code: allValues.stock_code,
+              buy_price: allValues.buy_price,
+              buy_date: allValues.buy_date?.format("YYYY-MM-DD"),
+              expected_price: allValues.expected_price,
+              sell_date: allValues.sell_date?.format("YYYY-MM-DD"),
+              quantity: allValues.quantity,
+            });
+          }}
           initialValues={{
-            quantity: 100,
-            buy_date: allowedWorkdays[0], // 默认第一个工作日
-            sell_date: allowedWorkdays[0], // 默认第一个工作日
+            quantity: tradeFormData.quantity || 100,
+            buy_date: tradeFormData.buy_date
+              ? dayjs(tradeFormData.buy_date)
+              : allowedWorkdays[0],
+            sell_date: tradeFormData.sell_date
+              ? dayjs(tradeFormData.sell_date)
+              : allowedWorkdays[0],
           }}
         >
           <Form.Item
             name="stock_code"
             label="股票"
-            rules={[{ required: true, message: '请选择股票' }]}
+            rules={[{ required: true, message: "请选择股票" }]}
           >
             <Select
               placeholder="选择已预测的股票"
@@ -338,10 +416,10 @@ const TradeSimulator: React.FC = () => {
               <Form.Item
                 name="buy_price"
                 label="买入价格"
-                rules={[{ required: true, message: '请输入买入价格' }]}
+                rules={[{ required: true, message: "请输入买入价格" }]}
               >
                 <InputNumber
-                  style={{ width: '100%' }}
+                  style={{ width: "100%" }}
                   min={0.01}
                   step={0.01}
                   precision={2}
@@ -353,11 +431,11 @@ const TradeSimulator: React.FC = () => {
               <Form.Item
                 name="buy_date"
                 label="买入日期"
-                rules={[{ required: true, message: '请选择买入日期' }]}
+                rules={[{ required: true, message: "请选择买入日期" }]}
                 tooltip="最远可选择未来5个工作日"
               >
                 <DatePicker
-                  style={{ width: '100%' }}
+                  style={{ width: "100%" }}
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
                   onChange={handleBuyDateChange}
@@ -368,10 +446,10 @@ const TradeSimulator: React.FC = () => {
               <Form.Item
                 name="quantity"
                 label="数量(股)"
-                rules={[{ required: true, message: '请输入数量' }]}
+                rules={[{ required: true, message: "请输入数量" }]}
               >
                 <InputNumber
-                  style={{ width: '100%' }}
+                  style={{ width: "100%" }}
                   min={100}
                   step={100}
                   placeholder="数量"
@@ -385,10 +463,10 @@ const TradeSimulator: React.FC = () => {
               <Form.Item
                 name="expected_price"
                 label="预期卖出价格"
-                rules={[{ required: true, message: '请输入预期卖出价格' }]}
+                rules={[{ required: true, message: "请输入预期卖出价格" }]}
               >
                 <InputNumber
-                  style={{ width: '100%' }}
+                  style={{ width: "100%" }}
                   min={0.01}
                   step={0.01}
                   precision={2}
@@ -400,11 +478,11 @@ const TradeSimulator: React.FC = () => {
               <Form.Item
                 name="sell_date"
                 label="卖出日期"
-                rules={[{ required: true, message: '请选择卖出日期' }]}
+                rules={[{ required: true, message: "请选择卖出日期" }]}
                 tooltip="最远可选择未来5个工作日"
               >
                 <DatePicker
-                  style={{ width: '100%' }}
+                  style={{ width: "100%" }}
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
                   onChange={handleSellDateChange}
@@ -426,14 +504,14 @@ const TradeSimulator: React.FC = () => {
           </Row>
         </Form>
 
-        {result && (
+        {tradeResult && (
           <div className="result-section">
             <Card className="result-card" size="small">
               <Row gutter={16}>
                 <Col span={8}>
                   <Statistic
                     title="买入成本"
-                    value={result.buy_cost}
+                    value={tradeResult.buy_cost}
                     precision={2}
                     suffix="元"
                   />
@@ -441,7 +519,7 @@ const TradeSimulator: React.FC = () => {
                 <Col span={8}>
                   <Statistic
                     title="预期卖出价格"
-                    value={result.expected_price}
+                    value={tradeResult.expected_price}
                     precision={2}
                     suffix="元/股"
                   />
@@ -449,49 +527,50 @@ const TradeSimulator: React.FC = () => {
                 <Col span={8}>
                   <Statistic
                     title="买入费用"
-                    value={result.buy_fees.total_fees}
+                    value={tradeResult.buy_fees.total_fees}
                     precision={2}
                     suffix="元"
                   />
                 </Col>
               </Row>
-              <div style={{ marginTop: 12, fontSize: 12, color: '#e2e8f0' }}>
-                买入费用明细: 佣金 {result.buy_fees.buy_commission.toFixed(2)}元 |
-                过户费 {result.buy_fees.transfer_fee.toFixed(2)}元
+              <div style={{ marginTop: 12, fontSize: 12, color: "#e2e8f0" }}>
+                买入费用明细: 佣金{" "}
+                {tradeResult.buy_fees.buy_commission.toFixed(2)}元 | 过户费{" "}
+                {tradeResult.buy_fees.transfer_fee.toFixed(2)}元
               </div>
             </Card>
 
-            {hasFutureDate ? (
+            {tradeHasFutureDate ? (
               <>
                 <div className="scenarios-title">盈亏分析</div>
                 {/* 符合预期独占一行 */}
                 <div className="scenarios-row-single">
                   {renderScenario(
-                    result.expected,
-                    '符合预期',
+                    tradeResult.expected,
+                    "符合预期",
                     <SmileOutlined />,
-                    '#10b981'
+                    "#10b981"
                   )}
                 </div>
                 {/* AI分析三种场景占一行 */}
                 <div className="scenarios-row-triple">
                   {renderScenario(
-                    result.conservative,
-                    '保守',
+                    tradeResult.conservative,
+                    "保守",
                     <FrownOutlined />,
-                    '#ef4444'
+                    "#ef4444"
                   )}
                   {renderScenario(
-                    result.moderate,
-                    '中等',
+                    tradeResult.moderate,
+                    "中等",
                     <MehOutlined />,
-                    '#6366f1'
+                    "#6366f1"
                   )}
                   {renderScenario(
-                    result.aggressive,
-                    '激进',
+                    tradeResult.aggressive,
+                    "激进",
                     <ArrowUpOutlined />,
-                    '#f59e0b'
+                    "#f59e0b"
                   )}
                 </div>
               </>
@@ -500,17 +579,19 @@ const TradeSimulator: React.FC = () => {
                 <div className="scenarios-title">盈亏分析</div>
                 <div className="scenarios-row-single">
                   {renderScenario(
-                    result.expected,
-                    '预期卖出',
+                    tradeResult.expected,
+                    "预期卖出",
                     <SmileOutlined />,
-                    '#10b981'
+                    "#10b981",
+                    false
                   )}
                 </div>
               </>
             )}
 
-            <div style={{ marginTop: 12, fontSize: 12, color: '#94a3b8' }}>
-              费率说明: 佣金0.025%(最低5元) | 印花税0.05%(仅卖出) | 过户费0.001%(仅沪市)
+            <div style={{ marginTop: 12, fontSize: 12, color: "#94a3b8" }}>
+              费率说明: 佣金0.025%(最低5元) | 印花税0.05%(仅卖出) |
+              过户费0.001%(仅沪市)
             </div>
           </div>
         )}

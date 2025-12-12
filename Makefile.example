@@ -24,10 +24,14 @@ build-frontend:
 
 # 部署前端到生产环境
 deploy-frontend: build-frontend
-	@echo "备份旧前端文件..."
-	ssh $(PROD_HOST) "mv $(NGINX_DIR) $(NGINX_DIR)_bak 2>/dev/null || true"
-	@echo "上传新前端文件..."
-	scp -r frontend/dist $(PROD_HOST):$(NGINX_DIR)
+	@echo "打包前端文件..."
+	cd frontend && tar -czf ../frontend.tar.gz -C dist .
+	@echo "上传到服务器..."
+	scp frontend.tar.gz $(PROD_HOST):$(REMOTE_DIR)/
+	@echo "解压并部署..."
+	ssh $(PROD_HOST) "rm -rf $(NGINX_DIR)_bak && mv $(NGINX_DIR) $(NGINX_DIR)_bak 2>/dev/null || true && mkdir -p $(NGINX_DIR) && tar -xzf $(REMOTE_DIR)/frontend.tar.gz -C $(NGINX_DIR) && rm -f $(REMOTE_DIR)/frontend.tar.gz && nginx -s reload"
+	@echo "清理本地tar包..."
+	rm -f frontend.tar.gz
 	@echo "前端部署完成"
 
 # 构建Docker镜像

@@ -264,3 +264,44 @@
   border-radius: 6px;
   text-align: center;
 }
+
+@media (max-width: 768px) {
+  .prediction-panel {
+    padding: 14px;
+  }
+
+  .panel-header h3 {
+    font-size: 14px;
+  }
+
+  .predictions-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .card-header {
+    padding: 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .card-body {
+    padding: 12px;
+  }
+
+  .price-section,
+  .level-section {
+    padding: 10px;
+  }
+
+  .price-item .value,
+  .level-item .value {
+    font-size: 16px;
+  }
+
+  .target-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}

@@ -41,6 +41,13 @@
   background: rgba(15, 23, 42, 0.3);
   border-radius: 12px;
   padding: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.chart-content.has-chart {
+  display: block;
 }
 
 .chart-loading {

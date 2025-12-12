@@ -38,10 +38,10 @@ func GetStockList() ([]Stock, error) {
 	}
 	stockListMutex.RUnlock()
 
-	// 从东方财富获取股票列表
-	stocks, err := fetchStockListFromEM()
-	if err != nil {
-		return nil, err
+	// 同时从东方财富和新浪获取，合并去重
+	stocks := fetchAndMergeStocks()
+	if len(stocks) == 0 {
+		return nil, fmt.Errorf("获取股票列表失败")
 	}
 
 	stockListMutex.Lock()
@@ -52,6 +52,46 @@ func GetStockList() ([]Stock, error) {
 	return stocks, nil
 }
 
+// fetchAndMergeStocks 从多个数据源获取股票并合并去重
+func fetchAndMergeStocks() []Stock {
+	stockMap := make(map[string]Stock)
+
+	// 从东方财富获取
+	emStocks, err := fetchStockListFromEM()
+	if err == nil {
+		for _, s := range emStocks {
+			stockMap[s.Code] = s
+		}
+		fmt.Printf("东方财富贡献 %d 只股票\n", len(emStocks))
+	} else {
+		fmt.Printf("东方财富获取失败: %v\n", err)
+	}
+
+	// 从新浪获取
+	sinaStocks, err := fetchStockListFromSina()
+	if err == nil {
+		added := 0
+		for _, s := range sinaStocks {
+			if _, exists := stockMap[s.Code]; !exists {
+				stockMap[s.Code] = s
+				added++
+			}
+		}
+		fmt.Printf("新浪贡献 %d 只新股票（总获取 %d 只）\n", added, len(sinaStocks))
+	} else {
+		fmt.Printf("新浪获取失败: %v\n", err)
+	}
+
+	// 转换为数组
+	var result []Stock
+	for _, s := range stockMap {
+		result = append(result, s)
+	}
+
+	fmt.Printf("合并去重后总计: %d 只股票\n", len(result))
+	return result
+}
+
 // fetchStockListFromEM 从东方财富获取股票列表
 func fetchStockListFromEM() ([]Stock, error) {
 	var allStocks []Stock
@@ -59,12 +99,15 @@ func fetchStockListFromEM() ([]Stock, error) {
 	// 获取沪市主板 (60开头)
 	shStocks, err := fetchEMStocks("m:1+t:2,m:1+t:23")
 	if err == nil {
+		shCount := 0
 		for _, s := range shStocks {
 			if strings.HasPrefix(s.Code, "6") {
 				s.Market = "SH"
 				allStocks = append(allStocks, s)
+				shCount++
 			}
 		}
+		fmt.Printf("东方财富沪市: 获取 %d 只, 过滤后 %d 只\n", len(shStocks), shCount)
 	} else {
 		fmt.Printf("获取沪市股票失败: %v\n", err)
 	}
@@ -72,22 +115,20 @@ func fetchStockListFromEM() ([]Stock, error) {
 	// 获取深市主板 (00开头)
 	szStocks, err := fetchEMStocks("m:0+t:6,m:0+t:80")
 	if err == nil {
+		szCount := 0
 		for _, s := range szStocks {
 			if strings.HasPrefix(s.Code, "0") {
 				s.Market = "SZ"
 				allStocks = append(allStocks, s)
+				szCount++
 			}
 		}
+		fmt.Printf("东方财富深市: 获取 %d 只, 过滤后 %d 只\n", len(szStocks), szCount)
 	} else {
 		fmt.Printf("获取深市股票失败: %v\n", err)
 	}
 
-	// 如果东方财富失败，尝试新浪接口
-	if len(allStocks) == 0 {
-		fmt.Println("东方财富接口失败，尝试新浪接口...")
-		return fetchStockListFromSina()
-	}
-
+	fmt.Printf("东方财富总计: %d 只股票\n", len(allStocks))
 	return allStocks, nil
 }
 
@@ -95,29 +136,41 @@ func fetchStockListFromEM() ([]Stock, error) {
 func fetchStockListFromSina() ([]Stock, error) {
 	var allStocks []Stock
 
-	// 沪市
-	for page := 1; page <= 20; page++ {
+	// 沪市 - 约2000只，每页80只，需要约25页
+	for page := 1; page <= 50; page++ {
 		stocks, err := fetchSinaStocks("sh", page)
-		if err != nil || len(stocks) == 0 {
+		if err != nil {
+			fmt.Printf("新浪沪市第%d页获取失败: %v\n", page, err)
+			break
+		}
+		if len(stocks) == 0 {
 			break
 		}
 		allStocks = append(allStocks, stocks...)
 	}
+	fmt.Printf("新浪沪市获取到 %d 只股票\n", len(allStocks))
 
-	// 深市
-	for page := 1; page <= 20; page++ {
+	shCount := len(allStocks)
+
+	// 深市 - 约2500只，每页80只，需要约32页
+	for page := 1; page <= 50; page++ {
 		stocks, err := fetchSinaStocks("sz", page)
-		if err != nil || len(stocks) == 0 {
+		if err != nil {
+			fmt.Printf("新浪深市第%d页获取失败: %v\n", page, err)
+			break
+		}
+		if len(stocks) == 0 {
 			break
 		}
 		allStocks = append(allStocks, stocks...)
 	}
+	fmt.Printf("新浪深市获取到 %d 只股票\n", len(allStocks)-shCount)
 
 	if len(allStocks) == 0 {
 		return nil, fmt.Errorf("获取股票列表失败")
 	}
 
-	fmt.Printf("从新浪获取到 %d 只股票\n", len(allStocks))
+	fmt.Printf("从新浪总共获取到 %d 只股票\n", len(allStocks))
 	return allStocks, nil
 }
 
@@ -204,15 +257,32 @@ func fetchEMStocks(fs string) ([]Stock, error) {
 		return nil, err
 	}
 
-	// 尝试解析 diff 数组
-	var diffList []struct {
+	// diff 结构
+	type DiffItem struct {
 		F12 string `json:"f12"` // 代码
 		F14 string `json:"f14"` // 名称
 	}
 
+	var diffList []DiffItem
+
+	// 检查 diff 是否为空
+	if len(result.Data.Diff) == 0 || string(result.Data.Diff) == "null" {
+		fmt.Printf("东方财富返回空数据, fs=%s\n", fs)
+		return nil, fmt.Errorf("东方财富返回空数据")
+	}
+
+	// 先尝试解析为数组
 	if err := json.Unmarshal(result.Data.Diff, &diffList); err != nil {
-		fmt.Printf("解析diff失败: %v\n", err)
-		return nil, err
+		// 如果失败，尝试解析为对象（key-value 形式，如 {"0": {...}, "1": {...}}）
+		var diffMap map[string]DiffItem
+		if err2 := json.Unmarshal(result.Data.Diff, &diffMap); err2 != nil {
+			fmt.Printf("解析diff失败(数组): %v, 解析diff失败(对象): %v\n", err, err2)
+			return nil, err
+		}
+		// 从对象转换为数组
+		for _, item := range diffMap {
+			diffList = append(diffList, item)
+		}
 	}
 
 	var stocks []Stock
@@ -240,6 +310,8 @@ func SearchStocks(keyword string) ([]Stock, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	fmt.Printf("股票总数: %d, 搜索关键词: %s\n", len(allStocks), keyword)
 
 	if keyword == "" {
 		return allStocks, nil
