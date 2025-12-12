@@ -50,6 +50,8 @@ func main() {
 		// 股票相关
 		api.GET("/stocks", handler.GetStocks)
 		api.GET("/stocks/:code/kline", handler.GetKline)
+		api.GET("/stocks/:code/indicators", handler.GetIndicators)
+		api.GET("/stocks/:code/news", handler.GetNews)
 
 		// 预测相关
 		api.POST("/predict", handler.Predict)

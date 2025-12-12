@@ -5,8 +5,8 @@ import (
 	"math"
 	"strings"
 
-	"stock-forecast-backend/internal/client"
 	"stock-forecast-backend/internal/model"
+	"stock-forecast-backend/internal/stockdata"
 )
 
 const (
@@ -24,7 +24,7 @@ const (
 // SimulateTrade 模拟委托交易计算
 func SimulateTrade(req *model.TradeSimulateRequest) (*model.TradeSimulateResponse, error) {
 	// 获取股票名称
-	stockName, err := client.GetStockName(req.StockCode)
+	stockName, err := stockdata.GetStockName(req.StockCode)
 	if err != nil {
 		stockName = "未知股票"
 	}

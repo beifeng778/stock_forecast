@@ -4,14 +4,14 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"stock-forecast-backend/internal/client"
+	"stock-forecast-backend/internal/stockdata"
 )
 
 // GetStocks 获取股票列表
 func GetStocks(c *gin.Context) {
 	keyword := c.Query("keyword")
 
-	stocks, err := client.GetStocks(keyword)
+	stocks, err := stockdata.SearchStocks(keyword)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -29,7 +29,7 @@ func GetKline(c *gin.Context) {
 	code := c.Param("code")
 	period := c.DefaultQuery("period", "daily")
 
-	kline, err := client.GetKline(code, period)
+	kline, err := stockdata.GetKline(code, period)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -38,4 +38,36 @@ func GetKline(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, kline)
+}
+
+// GetIndicators 获取技术指标
+func GetIndicators(c *gin.Context) {
+	code := c.Param("code")
+
+	indicators, err := stockdata.GetIndicators(code)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, indicators)
+}
+
+// GetNews 获取股票新闻
+func GetNews(c *gin.Context) {
+	code := c.Param("code")
+
+	news, err := stockdata.GetStockNews(code, 5)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": news,
+	})
 }

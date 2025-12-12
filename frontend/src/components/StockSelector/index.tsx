@@ -31,9 +31,10 @@ const StockSelector: React.FC = () => {
     setSearching(true);
     try {
       const result = await getStocks(keyword);
-      setStocks(result);
+      setStocks(result || []);
     } catch (error) {
       console.error('搜索股票失败:', error);
+      setStocks([]);
     } finally {
       setSearching(false);
     }

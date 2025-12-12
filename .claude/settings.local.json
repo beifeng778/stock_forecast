@@ -22,7 +22,8 @@
       "Bash(python3:*)",
       "Bash(cat /d/ai_project/stock_forecast/backend/.env)",
       "Bash(cat:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(find:*)"
     ]
   }
 }

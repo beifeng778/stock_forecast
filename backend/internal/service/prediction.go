@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 
-	"stock-forecast-backend/internal/client"
 	"stock-forecast-backend/internal/langchain"
 	"stock-forecast-backend/internal/model"
+	"stock-forecast-backend/internal/stockdata"
 )
 
 // PredictStocks 批量预测股票
@@ -52,72 +52,59 @@ func PredictStocks(codes []string, period string) ([]model.PredictResult, error)
 // predictSingleStock 预测单只股票
 func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	// 1. 获取股票名称
-	stockName, err := client.GetStockName(code)
+	stockName, err := stockdata.GetStockName(code)
 	if err != nil {
 		stockName = "未知"
 	}
 
 	// 2. 获取技术指标
-	indicators, err := client.GetIndicators(code)
+	indicators, err := stockdata.GetIndicators(code)
 	if err != nil {
 		return nil, fmt.Errorf("获取技术指标失败: %v", err)
 	}
 
-	// 3. 获取ML预测结果
-	mlResult, err := client.GetMLPrediction(code, period)
-	if err != nil {
-		return nil, fmt.Errorf("获取ML预测失败: %v", err)
-	}
+	// 3. 转换技术指标
+	techIndicators := convertIndicators(indicators)
 
-	// 4. 解析技术指标
-	techIndicators := parseIndicators(indicators)
+	// 4. 生成技术信号（从 stockdata 获取）
+	signals := convertSignals(indicators.Signals)
 
-	// 5. 解析ML预测
-	mlPredictions := parseMLPredictions(mlResult)
-
-	// 6. 获取当前价格
-	currentPrice := getFloat(indicators, "current_price")
-
-	// 7. 生成技术信号
-	signals := generateSignals(techIndicators)
-
-	// 8. 获取股票新闻
-	clientNews, _ := client.GetStockNews(code)
-	news := make([]langchain.NewsItem, len(clientNews))
-	for i, n := range clientNews {
+	// 5. 获取股票新闻
+	newsItems, _ := stockdata.GetStockNews(code, 5)
+	news := make([]langchain.NewsItem, len(newsItems))
+	for i, n := range newsItems {
 		news[i] = langchain.NewsItem{Title: n.Title, Time: n.Time, Source: n.Source}
 	}
 
-	// 9. 使用LangChain进行综合分析（包含新闻）
+	// 6. 基于技术指标生成简化的ML预测（不再依赖Python服务）
+	mlPredictions := generateMLPredictions(indicators)
+
+	// 7. 使用LangChain进行综合分析（包含新闻）
 	analysis, err := langchain.AnalyzeStock(code, stockName, techIndicators, mlPredictions, signals, news)
 	if err != nil {
 		analysis = "AI分析暂时不可用"
 	}
 
-	// 9. 综合判断趋势
+	// 8. 综合判断趋势
 	trend, trendCN, confidence := determineTrend(mlPredictions, signals)
 
-	// 10. 计算支撑位和压力位
-	supportLevel := getFloat(indicators, "support_level")
-	resistanceLevel := getFloat(indicators, "resistance_level")
-
-	// 11. 计算目标价位
-	targetPrices := calculateTargetPrices(currentPrice, trend, confidence)
+	// 9. 计算目标价位
+	targetPrices := calculateTargetPrices(indicators.CurrentPrice, trend, confidence)
 
 	return &model.PredictResult{
 		StockCode:       code,
 		StockName:       stockName,
-		CurrentPrice:    currentPrice,
+		CurrentPrice:    indicators.CurrentPrice,
 		Trend:           trend,
 		TrendCN:         trendCN,
 		Confidence:      confidence,
 		PriceRange: model.PriceRange{
-			Low:  supportLevel,
-			High: resistanceLevel,
+			Low:  indicators.SupportLevel,
+			High: indicators.ResistanceLevel,
 		},
 		TargetPrices:    targetPrices,
-		SupportLevel:    supportLevel,
-		ResistanceLevel: resistanceLevel,
+		SupportLevel:    indicators.SupportLevel,
+		ResistanceLevel: indicators.ResistanceLevel,
 		Indicators:      techIndicators,
 		Signals:         signals,
 		Analysis:        analysis,
@@ -125,117 +112,114 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	}, nil
 }
 
-// parseIndicators 解析技术指标
-func parseIndicators(data map[string]interface{}) model.TechnicalIndicators {
+// convertIndicators 转换技术指标
+func convertIndicators(ind *stockdata.Indicators) model.TechnicalIndicators {
 	return model.TechnicalIndicators{
-		MA5:    getFloat(data, "ma5"),
-		MA10:   getFloat(data, "ma10"),
-		MA20:   getFloat(data, "ma20"),
-		MA60:   getFloat(data, "ma60"),
-		MACD:   getFloat(data, "macd"),
-		Signal: getFloat(data, "signal"),
-		Hist:   getFloat(data, "hist"),
-		RSI:    getFloat(data, "rsi"),
-		KDJ_K:  getFloat(data, "kdj_k"),
-		KDJ_D:  getFloat(data, "kdj_d"),
-		KDJ_J:  getFloat(data, "kdj_j"),
-		BOLL_U: getFloat(data, "boll_upper"),
-		BOLL_M: getFloat(data, "boll_middle"),
-		BOLL_L: getFloat(data, "boll_lower"),
+		MA5:    ind.MA5,
+		MA10:   ind.MA10,
+		MA20:   ind.MA20,
+		MA60:   ind.MA60,
+		MACD:   ind.MACD,
+		Signal: ind.Signal,
+		Hist:   ind.Hist,
+		RSI:    ind.RSI,
+		KDJ_K:  ind.KDJK,
+		KDJ_D:  ind.KDJD,
+		KDJ_J:  ind.KDJJ,
+		BOLL_U: ind.BollUpper,
+		BOLL_M: ind.BollMiddle,
+		BOLL_L: ind.BollLower,
 	}
 }
 
-// parseMLPredictions 解析ML预测结果
-func parseMLPredictions(data map[string]interface{}) model.MLPredictions {
+// convertSignals 转换信号
+func convertSignals(signals []stockdata.Signal) []model.Signal {
+	result := make([]model.Signal, len(signals))
+	for i, s := range signals {
+		result[i] = model.Signal{
+			Name:   s.Name,
+			Type:   s.Type,
+			TypeCN: s.Desc,
+			Desc:   s.Desc,
+		}
+	}
+	return result
+}
+
+// generateMLPredictions 基于技术指标生成ML预测（简化版）
+func generateMLPredictions(ind *stockdata.Indicators) model.MLPredictions {
+	// 基于均线判断趋势
+	maTrend := "sideways"
+	maConfidence := 0.5
+	if ind.CurrentPrice > ind.MA5 && ind.MA5 > ind.MA20 {
+		maTrend = "up"
+		maConfidence = 0.7
+	} else if ind.CurrentPrice < ind.MA5 && ind.MA5 < ind.MA20 {
+		maTrend = "down"
+		maConfidence = 0.7
+	}
+
+	// 基于MACD判断趋势
+	macdTrend := "sideways"
+	macdConfidence := 0.5
+	if ind.MACD > ind.Signal && ind.Hist > 0 {
+		macdTrend = "up"
+		macdConfidence = 0.65
+	} else if ind.MACD < ind.Signal && ind.Hist < 0 {
+		macdTrend = "down"
+		macdConfidence = 0.65
+	}
+
+	// 基于RSI判断趋势
+	rsiTrend := "sideways"
+	rsiConfidence := 0.5
+	if ind.RSI < 30 {
+		rsiTrend = "up" // 超卖，可能反弹
+		rsiConfidence = 0.6
+	} else if ind.RSI > 70 {
+		rsiTrend = "down" // 超买，可能回调
+		rsiConfidence = 0.6
+	}
+
+	// 计算预测价格
+	maPrice := ind.CurrentPrice
+	if maTrend == "up" {
+		maPrice = ind.CurrentPrice * 1.02
+	} else if maTrend == "down" {
+		maPrice = ind.CurrentPrice * 0.98
+	}
+
+	macdPrice := ind.CurrentPrice
+	if macdTrend == "up" {
+		macdPrice = ind.CurrentPrice * 1.015
+	} else if macdTrend == "down" {
+		macdPrice = ind.CurrentPrice * 0.985
+	}
+
+	rsiPrice := ind.CurrentPrice
+	if rsiTrend == "up" {
+		rsiPrice = ind.CurrentPrice * 1.025
+	} else if rsiTrend == "down" {
+		rsiPrice = ind.CurrentPrice * 0.975
+	}
+
 	return model.MLPredictions{
 		LSTM: model.MLPrediction{
-			Trend:      getString(data, "lstm_trend"),
-			Price:      getFloat(data, "lstm_price"),
-			Confidence: getFloat(data, "lstm_confidence"),
+			Trend:      maTrend,
+			Price:      maPrice,
+			Confidence: maConfidence,
 		},
 		Prophet: model.MLPrediction{
-			Trend:      getString(data, "prophet_trend"),
-			Price:      getFloat(data, "prophet_price"),
-			Confidence: getFloat(data, "prophet_confidence"),
+			Trend:      macdTrend,
+			Price:      macdPrice,
+			Confidence: macdConfidence,
 		},
 		XGBoost: model.MLPrediction{
-			Trend:      getString(data, "xgboost_trend"),
-			Price:      getFloat(data, "xgboost_price"),
-			Confidence: getFloat(data, "xgboost_confidence"),
+			Trend:      rsiTrend,
+			Price:      rsiPrice,
+			Confidence: rsiConfidence,
 		},
 	}
-}
-
-// generateSignals 生成技术信号
-func generateSignals(ind model.TechnicalIndicators) []model.Signal {
-	signals := make([]model.Signal, 0)
-
-	// MACD信号
-	if ind.MACD > ind.Signal {
-		signals = append(signals, model.Signal{
-			Name:   "MACD",
-			Type:   "bullish",
-			TypeCN: "金叉",
-			Desc:   "MACD线上穿信号线",
-		})
-	} else {
-		signals = append(signals, model.Signal{
-			Name:   "MACD",
-			Type:   "bearish",
-			TypeCN: "死叉",
-			Desc:   "MACD线下穿信号线",
-		})
-	}
-
-	// RSI信号
-	if ind.RSI > 70 {
-		signals = append(signals, model.Signal{
-			Name:   "RSI",
-			Type:   "bearish",
-			TypeCN: "超买",
-			Desc:   "RSI超过70，可能回调",
-		})
-	} else if ind.RSI < 30 {
-		signals = append(signals, model.Signal{
-			Name:   "RSI",
-			Type:   "bullish",
-			TypeCN: "超卖",
-			Desc:   "RSI低于30，可能反弹",
-		})
-	} else {
-		signals = append(signals, model.Signal{
-			Name:   "RSI",
-			Type:   "neutral",
-			TypeCN: "中性",
-			Desc:   "RSI处于正常区间",
-		})
-	}
-
-	// KDJ信号
-	if ind.KDJ_K > ind.KDJ_D && ind.KDJ_J > 80 {
-		signals = append(signals, model.Signal{
-			Name:   "KDJ",
-			Type:   "bearish",
-			TypeCN: "超买",
-			Desc:   "KDJ处于超买区域",
-		})
-	} else if ind.KDJ_K < ind.KDJ_D && ind.KDJ_J < 20 {
-		signals = append(signals, model.Signal{
-			Name:   "KDJ",
-			Type:   "bullish",
-			TypeCN: "超卖",
-			Desc:   "KDJ处于超卖区域",
-		})
-	} else {
-		signals = append(signals, model.Signal{
-			Name:   "KDJ",
-			Type:   "neutral",
-			TypeCN: "中性",
-			Desc:   "KDJ处于正常区间",
-		})
-	}
-
-	return signals
 }
 
 // determineTrend 综合判断趋势
@@ -278,51 +262,26 @@ func determineTrend(ml model.MLPredictions, signals []model.Signal) (string, str
 
 // calculateTargetPrices 计算目标价位
 func calculateTargetPrices(currentPrice float64, trend string, confidence float64) model.TargetPrices {
-	// confidence 已经是 0-1 之间的小数，直接使用
 	factor := confidence
 	if factor < 0.3 {
-		factor = 0.3 // 最小因子，确保有一定的价格变化
+		factor = 0.3
 	}
 	if trend == "up" {
 		return model.TargetPrices{
-			Short:  currentPrice * (1 + 0.03*factor),  // 短期涨幅 ~1-3%
-			Medium: currentPrice * (1 + 0.08*factor),  // 中期涨幅 ~2.4-8%
-			Long:   currentPrice * (1 + 0.15*factor),  // 长期涨幅 ~4.5-15%
+			Short:  currentPrice * (1 + 0.03*factor),
+			Medium: currentPrice * (1 + 0.08*factor),
+			Long:   currentPrice * (1 + 0.15*factor),
 		}
 	} else if trend == "down" {
 		return model.TargetPrices{
-			Short:  currentPrice * (1 - 0.03*factor),  // 短期跌幅 ~1-3%
-			Medium: currentPrice * (1 - 0.08*factor),  // 中期跌幅 ~2.4-8%
-			Long:   currentPrice * (1 - 0.15*factor),  // 长期跌幅 ~4.5-15%
+			Short:  currentPrice * (1 - 0.03*factor),
+			Medium: currentPrice * (1 - 0.08*factor),
+			Long:   currentPrice * (1 - 0.15*factor),
 		}
 	}
-	// 震荡行情，小幅波动
 	return model.TargetPrices{
 		Short:  currentPrice * (1 + 0.01*factor),
 		Medium: currentPrice,
 		Long:   currentPrice * (1 - 0.01*factor),
 	}
-}
-
-// getFloat 安全获取float值
-func getFloat(data map[string]interface{}, key string) float64 {
-	if v, ok := data[key]; ok {
-		switch val := v.(type) {
-		case float64:
-			return val
-		case int:
-			return float64(val)
-		}
-	}
-	return 0
-}
-
-// getString 安全获取string值
-func getString(data map[string]interface{}, key string) string {
-	if v, ok := data[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
 }

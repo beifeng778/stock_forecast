@@ -8,7 +8,7 @@ import type {
   TradeSimulateResponse,
 } from '../types';
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -20,7 +20,7 @@ export async function getStocks(keyword?: string): Promise<Stock[]> {
   const response = await api.get('/stocks', {
     params: { keyword },
   });
-  return response.data.data;
+  return response.data.data || [];
 }
 
 // 获取K线数据

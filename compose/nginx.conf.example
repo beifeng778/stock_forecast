@@ -1,0 +1,28 @@
+# Nginx 配置示例
+# 将此配置添加到你的 nginx server 块中
+
+server {
+    listen 80;
+    server_name your-domain.com;  # 替换为你的域名或IP
+
+    # 前端静态文件
+    location / {
+        root /path/to/frontend/dist;  # 替换为前端构建产物路径
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API 反向代理到后端容器
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 超时设置（LLM分析可能需要较长时间）
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+    }
+}

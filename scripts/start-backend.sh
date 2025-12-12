@@ -3,7 +3,8 @@
 echo "启动 Golang 后端服务..."
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/backend"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR/backend"
 
 # 加载环境变量
 if [ -f ".env" ]; then

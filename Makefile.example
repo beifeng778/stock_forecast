@@ -33,19 +33,17 @@ deploy-frontend: build-frontend
 # 构建Docker镜像
 build-images:
 	docker build -t stock-forecast-backend:$(VERSION) ./backend
-	docker build -t stock-forecast-data-service:$(VERSION) ./data-service
 
 # 导出镜像并上传到服务器
 push-images:
 	@echo "导出镜像为tar包..."
 	docker save stock-forecast-backend:$(VERSION) -o backend.tar
-	docker save stock-forecast-data-service:$(VERSION) -o data-service.tar
 	@echo "上传镜像到服务器..."
-	scp backend.tar data-service.tar $(PROD_HOST):$(REMOTE_DIR)/
+	scp backend.tar $(PROD_HOST):$(REMOTE_DIR)/
 	@echo "在服务器加载镜像..."
-	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker load -i backend.tar && docker load -i data-service.tar && rm -f backend.tar data-service.tar"
+	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker load -i backend.tar && rm -f backend.tar"
 	@echo "清理本地tar包..."
-	rm -f backend.tar data-service.tar
+	rm -f backend.tar
 	@echo "镜像上传完成"
 
 # 远程启动服务

@@ -18,9 +18,6 @@ fi
 # 额外清理：按端口杀进程
 echo "清理残留进程..."
 
-# 杀掉占用 5000 端口的进程 (Python)
-lsof -ti:5000 | xargs -r kill 2>/dev/null
-
 # 杀掉占用 8080 端口的进程 (Go)
 lsof -ti:8080 | xargs -r kill 2>/dev/null
 
