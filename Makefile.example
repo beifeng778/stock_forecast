@@ -1,0 +1,61 @@
+# 生产环境配置
+PROD_HOST ?= root@your-server-ip
+PROD_PORT ?= 22
+NGINX_DIR ?= /var/www/dist
+REMOTE_DIR ?= /opt/stock-forecast
+
+# 镜像配置
+VERSION ?= 1.0.0
+
+.PHONY: help build-frontend deploy-frontend build-images push-images deploy start-remote
+
+help:
+	@echo "使用方法:"
+	@echo "  make build-frontend    - 构建前端"
+	@echo "  make deploy-frontend   - 部署前端到生产环境"
+	@echo "  make build-images      - 构建Docker镜像"
+	@echo "  make push-images       - 上传镜像到服务器并加载"
+	@echo "  make start-remote      - 远程启动服务"
+	@echo "  make deploy            - 完整部署流程"
+
+# 构建前端
+build-frontend:
+	cd frontend && npm install && npx vite build
+
+# 部署前端到生产环境
+deploy-frontend: build-frontend
+	@echo "备份旧前端文件..."
+	ssh $(PROD_HOST) "mv $(NGINX_DIR) $(NGINX_DIR)_bak 2>/dev/null || true"
+	@echo "上传新前端文件..."
+	scp -r frontend/dist $(PROD_HOST):$(NGINX_DIR)
+	@echo "前端部署完成"
+
+# 构建Docker镜像
+build-images:
+	docker build -t stock-forecast-backend:$(VERSION) ./backend
+	docker build -t stock-forecast-data-service:$(VERSION) ./data-service
+
+# 导出镜像并上传到服务器
+push-images:
+	@echo "导出镜像为tar包..."
+	docker save stock-forecast-backend:$(VERSION) -o backend.tar
+	docker save stock-forecast-data-service:$(VERSION) -o data-service.tar
+	@echo "上传镜像到服务器..."
+	scp backend.tar data-service.tar $(PROD_HOST):$(REMOTE_DIR)/
+	@echo "在服务器加载镜像..."
+	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker load -i backend.tar && docker load -i data-service.tar && rm -f backend.tar data-service.tar"
+	@echo "清理本地tar包..."
+	rm -f backend.tar data-service.tar
+	@echo "镜像上传完成"
+
+# 远程启动服务
+start-remote:
+	@echo "上传compose文件..."
+	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
+	@echo "启动服务..."
+	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate"
+	@echo "服务启动完成"
+
+# 完整部署
+deploy: deploy-frontend build-images push-images start-remote
+	@echo "部署完成"
