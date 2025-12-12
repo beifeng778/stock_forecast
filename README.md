@@ -63,25 +63,25 @@ cd ..
 
 ```bash
 # 终端 1: Python 数据服务
-./start-python.sh
+./scripts/start-python.sh
 
 # 终端 2: Golang 后端
-./start-backend.sh
+./scripts/start-backend.sh
 
 # 终端 3: 前端
-./start-frontend.sh
+./scripts/start-frontend.sh
 ```
 
 **方式二：一键启动**
 
 ```bash
-./start-all.sh
+./scripts/start-all.sh
 ```
 
 **停止服务**
 
 ```bash
-./stop-all.sh
+./scripts/stop-all.sh
 ```
 
 ### 访问地址

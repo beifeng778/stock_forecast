@@ -21,7 +21,8 @@
       "Bash(pip show:*)",
       "Bash(python3:*)",
       "Bash(cat /d/ai_project/stock_forecast/backend/.env)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(dir:*)"
     ]
   }
 }
