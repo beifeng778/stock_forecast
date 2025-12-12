@@ -1,6 +1,16 @@
 import { create } from 'zustand';
 import type { Stock, PredictResult, PeriodType } from '../types';
 
+// 预测K线数据类型
+export interface PredictionKline {
+  date: string;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  volume: number;
+}
+
 interface StockStore {
   // 选中的股票
   selectedStocks: Stock[];
@@ -24,6 +34,10 @@ interface StockStore {
 
   // 已预测的股票代码（用于委托模拟筛选）
   predictedCodes: string[];
+
+  // 预测K线数据（按股票代码存储）
+  predictionKlines: Record<string, PredictionKline[]>;
+  setPredictionKlines: (code: string, klines: PredictionKline[]) => void;
 }
 
 export const useStockStore = create<StockStore>((set, get) => ({
@@ -55,4 +69,10 @@ export const useStockStore = create<StockStore>((set, get) => ({
   setLoading: (loading) => set({ loading }),
 
   predictedCodes: [],
+
+  predictionKlines: {},
+  setPredictionKlines: (code, klines) => {
+    const { predictionKlines } = get();
+    set({ predictionKlines: { ...predictionKlines, [code]: klines } });
+  },
 }));

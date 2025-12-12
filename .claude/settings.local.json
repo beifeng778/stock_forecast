@@ -15,7 +15,9 @@
       "Bash(curl:*)",
       "Bash(go build:*)",
       "Bash(./server.exe:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx vite build:*)"
     ]
   }
 }

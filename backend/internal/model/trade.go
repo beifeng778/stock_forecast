@@ -2,16 +2,17 @@ package model
 
 // TradeSimulateRequest 委托模拟请求
 type TradeSimulateRequest struct {
-	StockCode         string  `json:"stock_code" binding:"required"`
-	BuyPrice          float64 `json:"buy_price" binding:"required"`
-	BuyDate           string  `json:"buy_date" binding:"required"`
-	ExpectedPrice     float64 `json:"expected_price" binding:"required"`      // 预期卖出价格（乐观情况）
-	PredictedMidPrice float64 `json:"predicted_mid_price" binding:"required"` // 预测中位数价格（中性情况）
-	PredictedLowPrice float64 `json:"predicted_low_price" binding:"required"` // 预测最低价格（悲观情况）
-	Confidence        float64 `json:"confidence" binding:"required"`          // 预测置信度 (0-1)
-	Trend             string  `json:"trend" binding:"required"`               // 预测趋势 (up/down/sideways)
-	SellDate          string  `json:"sell_date" binding:"required"`
-	Quantity          int     `json:"quantity" binding:"required"`
+	StockCode      string  `json:"stock_code" binding:"required"`
+	BuyPrice       float64 `json:"buy_price" binding:"required"`
+	BuyDate        string  `json:"buy_date" binding:"required"`
+	ExpectedPrice  float64 `json:"expected_price" binding:"required"`   // 预期卖出价格
+	PredictedHigh  float64 `json:"predicted_high" binding:"required"`   // 预测当日最高价
+	PredictedClose float64 `json:"predicted_close" binding:"required"`  // 预测当日收盘价
+	PredictedLow   float64 `json:"predicted_low" binding:"required"`    // 预测当日最低价
+	Confidence     float64 `json:"confidence" binding:"required"`       // 预测置信度 (0-1)
+	Trend          string  `json:"trend" binding:"required"`            // 预测趋势 (up/down/sideways)
+	SellDate       string  `json:"sell_date" binding:"required"`
+	Quantity       int     `json:"quantity" binding:"required"`
 }
 
 // TradeFees 交易费用
@@ -40,9 +41,10 @@ type TradeSimulateResponse struct {
 	BuyPrice      float64        `json:"buy_price"`
 	ExpectedPrice float64        `json:"expected_price"` // 预期卖出价格
 	Quantity      int            `json:"quantity"`
-	BuyCost       float64        `json:"buy_cost"`       // 买入成本
-	BuyFees       TradeFees      `json:"buy_fees"`       // 买入费用
-	Optimistic    ScenarioResult `json:"optimistic"`     // 乐观情况（最高点）
-	Neutral       ScenarioResult `json:"neutral"`        // 中性情况（中位数）
-	Pessimistic   ScenarioResult `json:"pessimistic"`    // 悲观情况（最低点）
+	BuyCost       float64        `json:"buy_cost"`  // 买入成本
+	BuyFees       TradeFees      `json:"buy_fees"`  // 买入费用
+	Expected      ScenarioResult `json:"expected"`  // 符合预期
+	DayHigh       ScenarioResult `json:"day_high"`  // 当日最高价
+	DayClose      ScenarioResult `json:"day_close"` // 当日收盘价
+	DayLow        ScenarioResult `json:"day_low"`   // 当日最低价
 }

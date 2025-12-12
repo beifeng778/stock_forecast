@@ -51,21 +51,14 @@ func SimulateTrade(req *model.TradeSimulateRequest) (*model.TradeSimulateRespons
 		TotalFees:      math.Round((buyCommission+buyTransferFee)*100) / 100,
 	}
 
-	// 基于预测价格计算三种场景的卖出价格
-	// 乐观：用户预期卖出价格
-	optimisticPrice := req.ExpectedPrice
-	// 中性：预测中位数价格
-	neutralPrice := req.PredictedMidPrice
-	// 悲观：预测最低价格
-	pessimisticPrice := req.PredictedLowPrice
+	// 计算四种场景的概率
+	expectedProb, highProb, closeProb, lowProb := calculateProbabilities(req.Confidence, req.Trend, req.BuyPrice, req.ExpectedPrice)
 
-	// 根据预测置信度和趋势计算三种场景的概率
-	optimisticProb, neutralProb, pessimisticProb := calculateProbabilities(req.Confidence, req.Trend, req.BuyPrice, req.ExpectedPrice)
-
-	// 计算三种场景
-	optimistic := calculateScenarioWithProb(optimisticPrice, float64(req.Quantity), buyCost, isSH, optimisticProb)
-	neutral := calculateScenarioWithProb(neutralPrice, float64(req.Quantity), buyCost, isSH, neutralProb)
-	pessimistic := calculateScenarioWithProb(pessimisticPrice, float64(req.Quantity), buyCost, isSH, pessimisticProb)
+	// 计算四种场景
+	expected := calculateScenarioWithProb(req.ExpectedPrice, float64(req.Quantity), buyCost, isSH, expectedProb)
+	dayHigh := calculateScenarioWithProb(req.PredictedHigh, float64(req.Quantity), buyCost, isSH, highProb)
+	dayClose := calculateScenarioWithProb(req.PredictedClose, float64(req.Quantity), buyCost, isSH, closeProb)
+	dayLow := calculateScenarioWithProb(req.PredictedLow, float64(req.Quantity), buyCost, isSH, lowProb)
 
 	return &model.TradeSimulateResponse{
 		StockCode:     req.StockCode,
@@ -75,65 +68,53 @@ func SimulateTrade(req *model.TradeSimulateRequest) (*model.TradeSimulateRespons
 		Quantity:      req.Quantity,
 		BuyCost:       math.Round(buyCost*100) / 100,
 		BuyFees:       buyFees,
-		Optimistic:    optimistic,
-		Neutral:       neutral,
-		Pessimistic:   pessimistic,
+		Expected:      expected,
+		DayHigh:       dayHigh,
+		DayClose:      dayClose,
+		DayLow:        dayLow,
 	}, nil
 }
 
-// calculateProbabilities 根据置信度和趋势计算三种场景的概率
-// 概率计算逻辑：
-// - 如果预测趋势是上涨(up)，乐观概率较高
-// - 如果预测趋势是下跌(down)，悲观概率较高
-// - 如果预测趋势是震荡(sideways)，中性概率较高
-// - 置信度越高，主要趋势的概率越高
-func calculateProbabilities(confidence float64, trend string, buyPrice, expectedPrice float64) (optimistic, neutral, pessimistic float64) {
-	// 基础概率分布
-	baseOptimistic := 0.25
-	baseNeutral := 0.50
-	basePessimistic := 0.25
+// calculateProbabilities 根据置信度和趋势计算四种场景的概率
+// 返回：符合预期、最高价、收盘价、最低价的概率
+func calculateProbabilities(confidence float64, trend string, buyPrice, expectedPrice float64) (expected, high, close, low float64) {
+	// 基础概率：符合预期15%，最高20%，收盘45%，最低20%
+	expected = 0.15
+	high = 0.20
+	close = 0.45
+	low = 0.20
 
-	// 根据趋势调整概率
+	// 根据趋势调整
 	switch trend {
 	case "up":
-		// 上涨趋势：乐观概率增加
-		optimistic = baseOptimistic + 0.25*confidence
-		neutral = baseNeutral - 0.10*confidence
-		pessimistic = basePessimistic - 0.15*confidence
+		expected += 0.05 * confidence
+		high += 0.05 * confidence
+		close -= 0.05 * confidence
+		low -= 0.05 * confidence
 	case "down":
-		// 下跌趋势：悲观概率增加
-		optimistic = baseOptimistic - 0.15*confidence
-		neutral = baseNeutral - 0.10*confidence
-		pessimistic = basePessimistic + 0.25*confidence
-	default: // sideways
-		// 震荡趋势：中性概率增加
-		optimistic = baseOptimistic - 0.05*confidence
-		neutral = baseNeutral + 0.10*confidence
-		pessimistic = basePessimistic - 0.05*confidence
+		expected -= 0.05 * confidence
+		high -= 0.05 * confidence
+		close -= 0.05 * confidence
+		low += 0.15 * confidence
 	}
 
-	// 根据预期价格与买入价格的差距调整
-	// 如果预期涨幅过大，降低乐观概率
+	// 根据预期涨幅调整
 	expectedReturn := (expectedPrice - buyPrice) / buyPrice
-	if expectedReturn > 0.10 { // 预期涨幅超过10%
-		adjustment := math.Min(expectedReturn-0.10, 0.15) // 最多调整15%
-		optimistic -= adjustment
-		pessimistic += adjustment * 0.5
-		neutral += adjustment * 0.5
+	if expectedReturn > 0.10 {
+		adjustment := math.Min(expectedReturn-0.10, 0.10)
+		expected -= adjustment
+		close += adjustment
 	}
 
 	// 确保概率在合理范围内
-	optimistic = math.Max(0.05, math.Min(0.60, optimistic))
-	neutral = math.Max(0.20, math.Min(0.70, neutral))
-	pessimistic = math.Max(0.05, math.Min(0.60, pessimistic))
+	expected = math.Max(0.05, math.Min(0.30, expected))
+	high = math.Max(0.10, math.Min(0.30, high))
+	close = math.Max(0.30, math.Min(0.60, close))
+	low = math.Max(0.10, math.Min(0.30, low))
 
-	// 归一化，确保总和为1
-	total := optimistic + neutral + pessimistic
-	optimistic = optimistic / total
-	neutral = neutral / total
-	pessimistic = pessimistic / total
-
-	return optimistic, neutral, pessimistic
+	// 归一化
+	total := expected + high + close + low
+	return expected / total, high / total, close / total, low / total
 }
 
 // calculateScenarioWithProb 计算单个场景的盈亏（带概率）

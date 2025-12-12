@@ -120,11 +120,12 @@ export interface TradeSimulateRequest {
   stock_code: string;
   buy_price: number;
   buy_date: string;
-  expected_price: number;        // 预期卖出价格（乐观情况）
-  predicted_mid_price: number;   // 预测中位数价格（中性情况）
-  predicted_low_price: number;   // 预测最低价格（悲观情况）
-  confidence: number;            // 预测置信度 (0-1)
-  trend: string;                 // 预测趋势 (up/down/sideways)
+  expected_price: number;   // 预期卖出价格
+  predicted_high: number;   // 预测当日最高价
+  predicted_close: number;  // 预测当日收盘价
+  predicted_low: number;    // 预测当日最低价
+  confidence: number;       // 预测置信度 (0-1)
+  trend: string;            // 预测趋势 (up/down/sideways)
   sell_date: string;
   quantity: number;
 }
@@ -148,9 +149,10 @@ export interface TradeSimulateResponse {
   quantity: number;
   buy_cost: number;
   buy_fees: TradeFees;
-  optimistic: ScenarioResult;   // 乐观情况
-  neutral: ScenarioResult;      // 中性情况
-  pessimistic: ScenarioResult;  // 悲观情况
+  expected: ScenarioResult;   // 符合预期
+  day_high: ScenarioResult;   // 当日最高价
+  day_close: ScenarioResult;  // 当日收盘价
+  day_low: ScenarioResult;    // 当日最低价
 }
 
 // 周期类型

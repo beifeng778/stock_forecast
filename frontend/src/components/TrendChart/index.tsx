@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { Radio, Spin, Empty, Select, Space } from 'antd';
 import { useStockStore } from '../../store';
@@ -6,8 +6,15 @@ import { getKline } from '../../services/api';
 import type { KlineData, PeriodType } from '../../types';
 import './index.css';
 
+// 判断A股是否已收盘（15:00收盘）
+const isMarketClosed = (): boolean => {
+  const now = new Date();
+  const closeTime = now.getHours() * 100 + now.getMinutes();
+  return closeTime >= 1500;
+};
+
 const TrendChart: React.FC = () => {
-  const { selectedStocks, period, setPeriod, predictions } = useStockStore();
+  const { selectedStocks, period, setPeriod, predictions, setPredictionKlines } = useStockStore();
   const [currentStock, setCurrentStock] = useState<string>('');
   const [klineData, setKlineData] = useState<KlineData[]>([]);
   const [stockName, setStockName] = useState<string>('');
@@ -61,22 +68,18 @@ const TrendChart: React.FC = () => {
     volume: number;
   }
 
-  // 生成未来5日预测数据（完整K线格式）
-  // 使用 target_prices.short 作为5日目标价，与预测结果卡片保持一致
-  const generatePredictionData = () => {
+  // 生成未来5日预测数据（完整K线格式）- 使用useMemo避免重复计算
+  const predictionData = useMemo(() => {
     const prediction = predictions.find(p => p.stock_code === currentStock);
     if (!prediction || klineData.length === 0) return null;
 
     const lastKline = klineData[klineData.length - 1];
     const lastPrice = lastKline?.close || 0;
-    // 使用 target_prices.short 作为5日目标价格，与预测结果卡片一致
     const targetPrice = prediction.target_prices.short;
-    // 支撑位和压力位用于计算高低价范围
     const supportLevel = prediction.support_level;
     const resistanceLevel = prediction.resistance_level;
     const confidence = prediction.confidence;
 
-    // 计算历史波动率（用于生成合理的高低价）
     const recentData = klineData.slice(-20);
     let avgVolatility = 0;
     let avgVolume = 0;
@@ -90,38 +93,40 @@ const TrendChart: React.FC = () => {
     const predictionKlines: PredictionKline[] = [];
     const dates: string[] = [];
 
-    // 生成未来5个工作日的日期和预测K线数据
-    const lastDate = new Date(klineData[klineData.length - 1].date);
-    let currentDate = new Date(lastDate);
-    let prevClose = lastPrice;
+    // 判断今天是否需要预测（未收盘且是工作日且数据中没有今天）
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const lastDataDate = klineData[klineData.length - 1].date;
+    const isWeekday = today.getDay() !== 0 && today.getDay() !== 6;
+    const needPredictToday = !isMarketClosed() && isWeekday && lastDataDate !== todayStr;
 
-    for (let i = 1; i <= 5; i++) {
+    // 从明天开始计算未来5个工作日（如果今天未收盘，从今天开始）
+    let currentDate = new Date(today);
+    if (isMarketClosed() || !isWeekday) {
       currentDate.setDate(currentDate.getDate() + 1);
+    }
+    let prevClose = lastPrice;
+    let dayIndex = 0;
+
+    const totalDays = 5;
+    while (predictionKlines.length < totalDays) {
       // 跳过周末
       while (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
         currentDate.setDate(currentDate.getDate() + 1);
       }
       const dateStr = currentDate.toISOString().split('T')[0];
       dates.push(dateStr);
+      dayIndex++;
 
-      // 线性插值计算目标收盘价
-      const targetClose = lastPrice + (targetPrice - lastPrice) * (i / 5);
-
-      // 根据置信度调整波动幅度（置信度越高，波动越小）
+      const targetClose = lastPrice + (targetPrice - lastPrice) * (dayIndex / totalDays);
       const volatilityFactor = avgVolatility * (1.2 - confidence * 0.4);
-
-      // 生成开盘价（基于前一天收盘价，有小幅跳空）
-      const gapFactor = (Math.random() - 0.5) * 0.01; // ±0.5% 跳空
+      const gapFactor = (Math.random() - 0.5) * 0.01;
       const open = prevClose * (1 + gapFactor);
-
-      // 收盘价
       const close = targetClose;
 
-      // 计算日内波动范围，基于支撑位和压力位
       const priceRangeSpread = resistanceLevel - supportLevel;
       const dayRange = Math.max(close * volatilityFactor, priceRangeSpread * 0.1);
 
-      // 根据趋势方向调整高低价
       const isUp = close > open;
       let high, low;
       if (isUp) {
@@ -132,13 +137,14 @@ const TrendChart: React.FC = () => {
         low = Math.min(open, close) - dayRange * 0.3;
       }
 
-      // 确保 high/low 在支撑位和压力位范围内波动
       high = Math.min(Math.max(high, open, close), resistanceLevel);
       low = Math.max(Math.min(low, open, close), supportLevel);
 
-      // 预测成交量（基于历史平均，有一定波动）
-      const volumeFactor = 0.8 + Math.random() * 0.4; // 80%-120%
+      const volumeFactor = 0.8 + Math.random() * 0.4;
       const volume = Math.round(avgVolume * volumeFactor);
+
+      // 标记是否为今日预测
+      const isToday = dateStr === todayStr;
 
       predictionKlines.push({
         date: dateStr,
@@ -150,10 +156,18 @@ const TrendChart: React.FC = () => {
       });
 
       prevClose = close;
+      currentDate.setDate(currentDate.getDate() + 1);
     }
 
-    return { dates, klines: predictionKlines };
-  };
+    return { dates, klines: predictionKlines, needPredictToday };
+  }, [currentStock, klineData, predictions]);
+
+  // 当预测数据生成后保存到store
+  useEffect(() => {
+    if (predictionData && currentStock) {
+      setPredictionKlines(currentStock, predictionData.klines);
+    }
+  }, [predictionData, currentStock, setPredictionKlines]);
 
   // 生成图表配置
   const getOption = () => {
@@ -163,9 +177,6 @@ const TrendChart: React.FC = () => {
 
     const dates = klineData.map(d => d.date);
     const prices = klineData.map(d => d.close);
-
-    // 获取预测数据
-    const predictionData = generatePredictionData();
     const allDates = predictionData ? [...dates, ...predictionData.dates] : dates;
 
     // 计算默认显示范围：最近5个工作日 + 预测5天
@@ -278,14 +289,18 @@ const TrendChart: React.FC = () => {
             const predKline = predictionData?.klines[predIdx];
             if (!predKline) return '';
             const pred = predictions.find(p => p.stock_code === currentStock);
+            const today = new Date().toISOString().split('T')[0];
+            const isToday = predKline.date === today;
+            const label = isToday ? 'AI预测（今日未收盘）' : 'AI预测';
+            const suffix = isToday ? '（预测值）' : '';
             return `
               <div style="font-size:12px">
-                <div style="font-weight:bold;margin-bottom:4px;color:#f59e0b">AI预测 ${predKline.date}</div>
-                <div>开盘: ${predKline.open.toFixed(2)}</div>
-                <div>收盘: ${predKline.close.toFixed(2)}</div>
-                <div>最高: ${predKline.high.toFixed(2)}</div>
-                <div>最低: ${predKline.low.toFixed(2)}</div>
-                <div>成交量: ${(predKline.volume / 10000).toFixed(0)}万</div>
+                <div style="font-weight:bold;margin-bottom:4px;color:#f59e0b">${label} ${predKline.date}</div>
+                <div>开盘: ${predKline.open.toFixed(2)}${suffix}</div>
+                <div>收盘: ${predKline.close.toFixed(2)}${suffix}</div>
+                <div>最高: ${predKline.high.toFixed(2)}${suffix}</div>
+                <div>最低: ${predKline.low.toFixed(2)}${suffix}</div>
+                <div>成交量: ${(predKline.volume / 10000).toFixed(0)}万${suffix}</div>
                 ${pred ? `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(2)} | 支撑: ${pred.support_level.toFixed(2)} | 压力: ${pred.resistance_level.toFixed(2)}</div>` : ''}
               </div>
             `;

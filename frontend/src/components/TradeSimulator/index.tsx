@@ -27,10 +27,29 @@ const isWorkday = (date: Dayjs): boolean => {
   return day !== 0 && day !== 6; // 0是周日，6是周六
 };
 
+// 判断A股是否已收盘（15:00收盘）
+const isMarketClosed = (): boolean => {
+  const now = dayjs();
+  const closeTime = now.hour() * 100 + now.minute();
+  return closeTime >= 1500;
+};
+
+// 判断日期是否为未来（考虑收盘时间）
+const isFutureDate = (date: Dayjs): boolean => {
+  const today = dayjs().startOf('day');
+  if (date.isAfter(today, 'day')) return true;
+  if (date.isSame(today, 'day') && !isMarketClosed()) return true;
+  return false;
+};
+
 // 获取从今天开始的未来N个工作日
 const getNextWorkdays = (count: number): Dayjs[] => {
   const workdays: Dayjs[] = [];
-  let current = dayjs().add(1, 'day'); // 从明天开始
+  // 如果今天未收盘且是工作日，今天也算未来
+  let current = dayjs();
+  if (isMarketClosed() || !isWorkday(current)) {
+    current = current.add(1, 'day');
+  }
   while (workdays.length < count) {
     if (isWorkday(current)) {
       workdays.push(current);
@@ -42,23 +61,19 @@ const getNextWorkdays = (count: number): Dayjs[] => {
 
 const TradeSimulator: React.FC = () => {
   const [form] = Form.useForm();
-  const { predictions, predictedCodes } = useStockStore();
+  const { predictions, predictedCodes, predictionKlines } = useStockStore();
   const [result, setResult] = useState<TradeSimulateResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [hasFutureDate, setHasFutureDate] = useState(false); // 是否包含未来日期
 
   // 计算未来5个工作日的最后一天
   const allowedWorkdays = useMemo(() => getNextWorkdays(5), []);
   const maxSellDate = allowedWorkdays[allowedWorkdays.length - 1];
 
-  // 禁用非工作日和超出范围的日期
+  // 禁用日期：过去到未来5个工作日，周末不可选
   const disabledDate = (current: Dayjs): boolean => {
     if (!current) return false;
-    const today = dayjs().startOf('day');
-    // 禁用今天及之前的日期
-    if (current.isBefore(today) || current.isSame(today, 'day')) return true;
-    // 禁用超过最大卖出日期的日期
     if (current.isAfter(maxSellDate, 'day')) return true;
-    // 禁用周末
     return !isWorkday(current);
   };
 
@@ -70,30 +85,50 @@ const TradeSimulator: React.FC = () => {
 
   // 计算盈亏
   const handleCalculate = async (values: any) => {
-    // 获取选中股票的预测结果
     const prediction = predictions.find((p) => p.stock_code === values.stock_code);
     if (!prediction) {
       message.error('未找到该股票的预测结果');
       return;
     }
 
+    const sellDateStr = values.sell_date.format('YYYY-MM-DD');
+    const klines = predictionKlines[values.stock_code] || [];
+    const targetKline = klines.find((k) => k.date === sellDateStr);
+
+    // 判断是否包含未来日期
+    const buyIsFuture = isFutureDate(values.buy_date);
+    const sellIsFuture = isFutureDate(values.sell_date);
+    setHasFutureDate(buyIsFuture || sellIsFuture);
+
+    // 从预测K线获取对应日期的价格
+    let predictedHigh: number;
+    let predictedClose: number;
+    let predictedLow: number;
+
+    if (targetKline) {
+      predictedHigh = targetKline.high;
+      predictedClose = targetKline.close;
+      predictedLow = targetKline.low;
+    } else {
+      // 如果没有找到对应日期的K线，使用默认值
+      predictedHigh = prediction.resistance_level;
+      predictedClose = prediction.target_prices.short;
+      predictedLow = prediction.support_level;
+    }
+
     setLoading(true);
     try {
-      // 中性情况：使用 target_prices.short（5日目标价），与预测结果卡片一致
-      const predictedMidPrice = prediction.target_prices.short;
-      // 悲观情况：使用支撑位
-      const predictedLowPrice = prediction.support_level;
-
       const response = await simulateTrade({
         stock_code: values.stock_code,
         buy_price: values.buy_price,
         buy_date: values.buy_date.format('YYYY-MM-DD'),
         expected_price: values.expected_price,
-        predicted_mid_price: predictedMidPrice,
-        predicted_low_price: predictedLowPrice,
+        predicted_high: predictedHigh,
+        predicted_close: predictedClose,
+        predicted_low: predictedLow,
         confidence: prediction.confidence,
         trend: prediction.trend,
-        sell_date: values.sell_date.format('YYYY-MM-DD'),
+        sell_date: sellDateStr,
         quantity: values.quantity,
       });
       setResult(response);
@@ -190,7 +225,7 @@ const TradeSimulator: React.FC = () => {
           onFinish={handleCalculate}
           initialValues={{
             quantity: 100,
-            buy_date: dayjs(),
+            buy_date: allowedWorkdays[0], // 默认第一个工作日
             sell_date: allowedWorkdays[0], // 默认第一个工作日
           }}
         >
@@ -227,8 +262,13 @@ const TradeSimulator: React.FC = () => {
                 name="buy_date"
                 label="买入日期"
                 rules={[{ required: true, message: '请选择买入日期' }]}
+                tooltip="最远可选择未来5个工作日"
               >
-                <DatePicker style={{ width: '100%' }} />
+                <DatePicker
+                  style={{ width: '100%' }}
+                  disabledDate={disabledDate}
+                  placeholder="选择工作日"
+                />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -268,7 +308,7 @@ const TradeSimulator: React.FC = () => {
                 name="sell_date"
                 label="卖出日期"
                 rules={[{ required: true, message: '请选择卖出日期' }]}
-                tooltip="仅可选择未来5个工作日内"
+                tooltip="最远可选择未来5个工作日"
               >
                 <DatePicker
                   style={{ width: '100%' }}
@@ -327,27 +367,49 @@ const TradeSimulator: React.FC = () => {
               </div>
             </Card>
 
-            <div className="scenarios-title">三种场景分析</div>
-            <div className="scenarios-grid">
-              {renderScenario(
-                result.optimistic,
-                '乐观情况 (预期价格)',
-                <SmileOutlined />,
-                '#10b981'
-              )}
-              {renderScenario(
-                result.neutral,
-                '中性情况 (目标价5日)',
-                <MehOutlined />,
-                '#6366f1'
-              )}
-              {renderScenario(
-                result.pessimistic,
-                '悲观情况 (支撑位)',
-                <FrownOutlined />,
-                '#ef4444'
-              )}
-            </div>
+            {hasFutureDate ? (
+              <>
+                <div className="scenarios-title">四种场景分析（含未来日期）</div>
+                <div className="scenarios-grid">
+                  {renderScenario(
+                    result.expected,
+                    '符合预期',
+                    <SmileOutlined />,
+                    '#10b981'
+                  )}
+                  {renderScenario(
+                    result.day_high,
+                    '当日最高价',
+                    <ArrowUpOutlined />,
+                    '#f59e0b'
+                  )}
+                  {renderScenario(
+                    result.day_close,
+                    '当日收盘价',
+                    <MehOutlined />,
+                    '#6366f1'
+                  )}
+                  {renderScenario(
+                    result.day_low,
+                    '当日最低价',
+                    <FrownOutlined />,
+                    '#ef4444'
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="scenarios-title">预期结果（历史日期）</div>
+                <div className="scenarios-grid">
+                  {renderScenario(
+                    result.expected,
+                    '预期卖出',
+                    <SmileOutlined />,
+                    '#10b981'
+                  )}
+                </div>
+              </>
+            )}
 
             <div style={{ marginTop: 12, fontSize: 12, color: '#94a3b8' }}>
               费率说明: 佣金0.025%(最低5元) | 印花税0.05%(仅卖出) | 过户费0.001%(仅沪市)
