@@ -149,10 +149,10 @@ export interface TradeSimulateResponse {
   quantity: number;
   buy_cost: number;
   buy_fees: TradeFees;
-  expected: ScenarioResult;   // 符合预期
-  day_high: ScenarioResult;   // 当日最高价
-  day_close: ScenarioResult;  // 当日收盘价
-  day_low: ScenarioResult;    // 当日最低价
+  expected: ScenarioResult;     // 符合预期
+  conservative: ScenarioResult; // 保守（AI分析）
+  moderate: ScenarioResult;     // 中等（AI分析）
+  aggressive: ScenarioResult;   // 激进（AI分析）
 }
 
 // 周期类型

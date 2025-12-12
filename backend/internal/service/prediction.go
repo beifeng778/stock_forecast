@@ -81,8 +81,15 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	// 7. 生成技术信号
 	signals := generateSignals(techIndicators)
 
-	// 8. 使用LangChain进行综合分析
-	analysis, err := langchain.AnalyzeStock(code, stockName, techIndicators, mlPredictions, signals)
+	// 8. 获取股票新闻
+	clientNews, _ := client.GetStockNews(code)
+	news := make([]langchain.NewsItem, len(clientNews))
+	for i, n := range clientNews {
+		news[i] = langchain.NewsItem{Title: n.Title, Time: n.Time, Source: n.Source}
+	}
+
+	// 9. 使用LangChain进行综合分析（包含新闻）
+	analysis, err := langchain.AnalyzeStock(code, stockName, techIndicators, mlPredictions, signals, news)
 	if err != nil {
 		analysis = "AI分析暂时不可用"
 	}

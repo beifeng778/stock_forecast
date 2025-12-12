@@ -72,3 +72,10 @@ async def get_indicators(code: str):
         **indicators,
         "signals": signals
     }
+
+
+@router.get("/stocks/{code}/news")
+async def get_news(code: str):
+    """获取股票新闻"""
+    news = stock_data_service.get_stock_news(code, limit=5)
+    return {"data": news}

@@ -17,7 +17,11 @@
       "Bash(./server.exe:*)",
       "Bash(findstr:*)",
       "Bash(npm run build:*)",
-      "Bash(npx vite build:*)"
+      "Bash(npx vite build:*)",
+      "Bash(pip show:*)",
+      "Bash(python3:*)",
+      "Bash(cat /d/ai_project/stock_forecast/backend/.env)",
+      "Bash(cat:*)"
     ]
   }
 }

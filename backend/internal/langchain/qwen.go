@@ -31,9 +31,6 @@ type QwenRequest struct {
 	Input struct {
 		Messages []Message `json:"messages"`
 	} `json:"input"`
-	Parameters struct {
-		ResultFormat string `json:"result_format"`
-	} `json:"parameters"`
 }
 
 // Message 消息
@@ -45,20 +42,34 @@ type Message struct {
 // QwenResponse 通义千问响应
 type QwenResponse struct {
 	Output struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 	} `json:"output"`
 	Usage struct {
 		TotalTokens int `json:"total_tokens"`
 	} `json:"usage"`
 }
 
+// NewsItem 新闻条目
+type NewsItem struct {
+	Title  string `json:"title"`
+	Time   string `json:"time"`
+	Source string `json:"source"`
+}
+
 // AnalyzeStock 使用通义千问分析股票
-func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml model.MLPredictions, signals []model.Signal) (string, error) {
+func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml model.MLPredictions, signals []model.Signal, news []NewsItem) (string, error) {
 	if dashscopeAPIKey == "" {
+		fmt.Println("[LLM] DASHSCOPE_API_KEY 未配置，使用备用分析")
 		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
 	}
+	fmt.Printf("[LLM] 使用模型: %s, 新闻数量: %d\n", llmModel, len(news))
 
-	prompt := buildAnalysisPrompt(code, name, indicators, ml, signals)
+	prompt := buildAnalysisPrompt(code, name, indicators, ml, signals, news)
 
 	req := QwenRequest{
 		Model: llmModel,
@@ -73,8 +84,6 @@ func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml mo
 			Content: prompt,
 		},
 	}
-	req.Parameters.ResultFormat = "text"
-
 	jsonData, err := json.Marshal(req)
 	if err != nil {
 		return "", fmt.Errorf("序列化请求失败: %v", err)
@@ -100,23 +109,41 @@ func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml mo
 		return "", fmt.Errorf("读取响应失败: %v", err)
 	}
 
+	fmt.Printf("[LLM] API响应状态: %d, 响应内容: %s\n", resp.StatusCode, string(body)[:min(500, len(body))])
+
 	var qwenResp QwenResponse
 	if err := json.Unmarshal(body, &qwenResp); err != nil {
-		return "", fmt.Errorf("解析响应失败: %v", err)
-	}
-
-	if qwenResp.Output.Text == "" {
+		fmt.Printf("[LLM] 解析响应失败: %v\n", err)
 		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
 	}
 
-	return qwenResp.Output.Text, nil
+	// 优先从 choices 获取结果（qwen3 格式），否则从 text 获取（旧格式）
+	result := qwenResp.Output.Text
+	if result == "" && len(qwenResp.Output.Choices) > 0 {
+		result = qwenResp.Output.Choices[0].Message.Content
+	}
+
+	if result == "" {
+		fmt.Println("[LLM] API返回空结果，使用备用分析")
+		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
+	}
+
+	return result, nil
 }
 
 // buildAnalysisPrompt 构建分析提示词
-func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators, ml model.MLPredictions, signals []model.Signal) string {
+func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators, ml model.MLPredictions, signals []model.Signal, news []NewsItem) string {
 	signalStr := ""
 	for _, s := range signals {
 		signalStr += fmt.Sprintf("%s: %s; ", s.Name, s.TypeCN)
+	}
+
+	newsStr := ""
+	if len(news) > 0 {
+		newsStr = "\n\n最新公告/新闻（请分析这些公告对股价的潜在影响）：\n"
+		for i, n := range news {
+			newsStr += fmt.Sprintf("%d. [%s] %s\n", i+1, n.Time, n.Title)
+		}
 	}
 
 	return fmt.Sprintf(`请分析股票 %s（%s）的走势：
@@ -133,9 +160,9 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 ML模型预测：
 - LSTM：趋势=%s, 置信度=%.1f%%
 - Prophet：趋势=%s, 置信度=%.1f%%
-- XGBoost：趋势=%s, 置信度=%.1f%%
+- XGBoost：趋势=%s, 置信度=%.1f%%%s
 
-请给出综合分析和操作建议。`,
+请结合技术面和消息面给出综合分析和操作建议。`,
 		name, code,
 		indicators.MA5, indicators.MA10, indicators.MA20, indicators.MA60,
 		indicators.MACD, indicators.Signal, indicators.Hist,
@@ -146,6 +173,7 @@ ML模型预测：
 		ml.LSTM.Trend, ml.LSTM.Confidence*100,
 		ml.Prophet.Trend, ml.Prophet.Confidence*100,
 		ml.XGBoost.Trend, ml.XGBoost.Confidence*100,
+		newsStr,
 	)
 }
 

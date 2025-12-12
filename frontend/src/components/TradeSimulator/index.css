@@ -105,6 +105,16 @@
   gap: 12px;
 }
 
+.scenarios-row-single {
+  margin-bottom: 12px;
+}
+
+.scenarios-row-triple {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
 .scenario-card {
   background: rgba(15, 23, 42, 0.6);
   border-radius: 10px;

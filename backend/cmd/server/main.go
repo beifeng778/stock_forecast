@@ -1,13 +1,37 @@
 package main
 
 import (
+	"bufio"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"stock-forecast-backend/internal/handler"
 )
+
+func init() {
+	// 手动加载 .env 文件
+	file, err := os.Open(".env")
+	if err != nil {
+		log.Println("未找到 .env 文件，使用系统环境变量")
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			os.Setenv(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
+}
 
 func main() {
 	r := gin.Default()

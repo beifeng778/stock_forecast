@@ -120,6 +120,37 @@ func GetMLPrediction(code, period string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+// NewsItem 新闻条目
+type NewsItem struct {
+	Title  string `json:"title"`
+	Time   string `json:"time"`
+	Source string `json:"source"`
+}
+
+// GetStockNews 获取股票新闻
+func GetStockNews(code string) ([]NewsItem, error) {
+	url := fmt.Sprintf("%s/api/stocks/%s/news", pythonServiceURL, code)
+	resp, err := HTTPClient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Data []NewsItem `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return result.Data, nil
+}
+
 // GetStockName 获取股票名称
 func GetStockName(code string) (string, error) {
 	url := fmt.Sprintf("%s/api/stocks/%s/info", pythonServiceURL, code)

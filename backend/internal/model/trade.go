@@ -36,15 +36,15 @@ type ScenarioResult struct {
 
 // TradeSimulateResponse 委托模拟响应
 type TradeSimulateResponse struct {
-	StockCode     string         `json:"stock_code"`
-	StockName     string         `json:"stock_name"`
-	BuyPrice      float64        `json:"buy_price"`
-	ExpectedPrice float64        `json:"expected_price"` // 预期卖出价格
-	Quantity      int            `json:"quantity"`
-	BuyCost       float64        `json:"buy_cost"`  // 买入成本
-	BuyFees       TradeFees      `json:"buy_fees"`  // 买入费用
-	Expected      ScenarioResult `json:"expected"`  // 符合预期
-	DayHigh       ScenarioResult `json:"day_high"`  // 当日最高价
-	DayClose      ScenarioResult `json:"day_close"` // 当日收盘价
-	DayLow        ScenarioResult `json:"day_low"`   // 当日最低价
+	StockCode    string         `json:"stock_code"`
+	StockName    string         `json:"stock_name"`
+	BuyPrice     float64        `json:"buy_price"`
+	ExpectedPrice float64       `json:"expected_price"` // 预期卖出价格
+	Quantity     int            `json:"quantity"`
+	BuyCost      float64        `json:"buy_cost"`     // 买入成本
+	BuyFees      TradeFees      `json:"buy_fees"`     // 买入费用
+	Expected     ScenarioResult `json:"expected"`     // 符合预期
+	Conservative ScenarioResult `json:"conservative"` // 保守（AI分析）
+	Moderate     ScenarioResult `json:"moderate"`     // 中等（AI分析）
+	Aggressive   ScenarioResult `json:"aggressive"`   // 激进（AI分析）
 }

@@ -51,70 +51,115 @@ func SimulateTrade(req *model.TradeSimulateRequest) (*model.TradeSimulateRespons
 		TotalFees:      math.Round((buyCommission+buyTransferFee)*100) / 100,
 	}
 
-	// 计算四种场景的概率
-	expectedProb, highProb, closeProb, lowProb := calculateProbabilities(req.Confidence, req.Trend, req.BuyPrice, req.ExpectedPrice)
+	// 根据趋势和置信度计算AI分析的三种价格
+	conservativePrice, moderatePrice, aggressivePrice := calculateAIPrices(req.BuyPrice, req.PredictedLow, req.PredictedClose, req.PredictedHigh, req.Confidence, req.Trend)
+
+	// 计算四种场景的概率（符合预期、保守、中等、激进）
+	// 如果预期价格接近某个场景价格，则合并概率
+	expectedProb, conservativeProb, moderateProb, aggressiveProb := calculateProbabilitiesWithMerge(
+		req.Confidence, req.Trend, req.ExpectedPrice,
+		conservativePrice, moderatePrice, aggressivePrice,
+	)
 
 	// 计算四种场景
 	expected := calculateScenarioWithProb(req.ExpectedPrice, float64(req.Quantity), buyCost, isSH, expectedProb)
-	dayHigh := calculateScenarioWithProb(req.PredictedHigh, float64(req.Quantity), buyCost, isSH, highProb)
-	dayClose := calculateScenarioWithProb(req.PredictedClose, float64(req.Quantity), buyCost, isSH, closeProb)
-	dayLow := calculateScenarioWithProb(req.PredictedLow, float64(req.Quantity), buyCost, isSH, lowProb)
+	conservative := calculateScenarioWithProb(conservativePrice, float64(req.Quantity), buyCost, isSH, conservativeProb)
+	moderate := calculateScenarioWithProb(moderatePrice, float64(req.Quantity), buyCost, isSH, moderateProb)
+	aggressive := calculateScenarioWithProb(aggressivePrice, float64(req.Quantity), buyCost, isSH, aggressiveProb)
 
 	return &model.TradeSimulateResponse{
-		StockCode:     req.StockCode,
-		StockName:     stockName,
-		BuyPrice:      req.BuyPrice,
+		StockCode:    req.StockCode,
+		StockName:    stockName,
+		BuyPrice:     req.BuyPrice,
 		ExpectedPrice: req.ExpectedPrice,
-		Quantity:      req.Quantity,
-		BuyCost:       math.Round(buyCost*100) / 100,
-		BuyFees:       buyFees,
-		Expected:      expected,
-		DayHigh:       dayHigh,
-		DayClose:      dayClose,
-		DayLow:        dayLow,
+		Quantity:     req.Quantity,
+		BuyCost:      math.Round(buyCost*100) / 100,
+		BuyFees:      buyFees,
+		Expected:     expected,
+		Conservative: conservative,
+		Moderate:     moderate,
+		Aggressive:   aggressive,
 	}, nil
 }
 
-// calculateProbabilities 根据置信度和趋势计算四种场景的概率
-// 返回：符合预期、最高价、收盘价、最低价的概率
-func calculateProbabilities(confidence float64, trend string, buyPrice, expectedPrice float64) (expected, high, close, low float64) {
-	// 基础概率：符合预期15%，最高20%，收盘45%，最低20%
-	expected = 0.15
-	high = 0.20
-	close = 0.45
-	low = 0.20
+// calculateProbabilitiesWithMerge 根据置信度和趋势计算四种场景的概率
+// 保守/中等/激进三个场景概率之和为100%
+// 符合预期的概率根据预期价格在价格区间中的位置插值计算
+func calculateProbabilitiesWithMerge(confidence float64, trend string, expectedPrice, conservativePrice, moderatePrice, aggressivePrice float64) (expected, conservative, moderate, aggressive float64) {
+	// 基础概率：保守25%，中等45%，激进30%
+	conservative = 0.25
+	moderate = 0.45
+	aggressive = 0.30
 
 	// 根据趋势调整
 	switch trend {
 	case "up":
-		expected += 0.05 * confidence
-		high += 0.05 * confidence
-		close -= 0.05 * confidence
-		low -= 0.05 * confidence
+		aggressive += 0.05 * confidence
+		conservative -= 0.05 * confidence
 	case "down":
-		expected -= 0.05 * confidence
-		high -= 0.05 * confidence
-		close -= 0.05 * confidence
-		low += 0.15 * confidence
-	}
-
-	// 根据预期涨幅调整
-	expectedReturn := (expectedPrice - buyPrice) / buyPrice
-	if expectedReturn > 0.10 {
-		adjustment := math.Min(expectedReturn-0.10, 0.10)
-		expected -= adjustment
-		close += adjustment
+		aggressive -= 0.10 * confidence
+		conservative += 0.10 * confidence
 	}
 
 	// 确保概率在合理范围内
-	expected = math.Max(0.05, math.Min(0.30, expected))
-	high = math.Max(0.10, math.Min(0.30, high))
-	close = math.Max(0.30, math.Min(0.60, close))
-	low = math.Max(0.10, math.Min(0.30, low))
+	conservative = math.Max(0.15, math.Min(0.35, conservative))
+	moderate = math.Max(0.35, math.Min(0.55, moderate))
+	aggressive = math.Max(0.15, math.Min(0.35, aggressive))
 
-	// 归一化
-	total := expected + high + close + low
-	return expected / total, high / total, close / total, low / total
+	// 归一化，确保三个场景概率之和为100%
+	total := conservative + moderate + aggressive
+	conservative = conservative / total
+	moderate = moderate / total
+	aggressive = aggressive / total
+
+	// 计算符合预期的概率：根据预期价格在区间中的位置插值
+	// 价格从低到高：保守 < 中等 < 激进
+	if expectedPrice <= conservativePrice {
+		// 低于保守价格，概率更低
+		expected = conservative * (expectedPrice / conservativePrice)
+	} else if expectedPrice <= moderatePrice {
+		// 在保守和中等之间，线性插值
+		ratio := (expectedPrice - conservativePrice) / (moderatePrice - conservativePrice)
+		expected = conservative + ratio*(moderate-conservative)
+	} else if expectedPrice <= aggressivePrice {
+		// 在中等和激进之间，线性插值
+		ratio := (expectedPrice - moderatePrice) / (aggressivePrice - moderatePrice)
+		expected = moderate + ratio*(aggressive-moderate)
+	} else {
+		// 高于激进价格，概率递减
+		expected = aggressive * (aggressivePrice / expectedPrice)
+	}
+
+	// 确保概率在合理范围内
+	expected = math.Max(0.05, math.Min(0.95, expected))
+
+	return expected, conservative, moderate, aggressive
+}
+
+// calculateAIPrices 根据AI分析计算保守/中等/激进三种价格
+func calculateAIPrices(buyPrice, predictedLow, predictedClose, predictedHigh, confidence float64, trend string) (conservative, moderate, aggressive float64) {
+	// 保守：接近最低价，风险最小
+	conservative = predictedLow + (predictedClose-predictedLow)*0.2
+
+	// 中等：接近收盘价
+	moderate = predictedClose
+
+	// 激进：接近最高价，收益最大但风险也大
+	aggressive = predictedClose + (predictedHigh-predictedClose)*0.8
+
+	// 根据趋势微调
+	switch trend {
+	case "up":
+		conservative *= (1 + 0.01*confidence)
+		moderate *= (1 + 0.02*confidence)
+		aggressive *= (1 + 0.03*confidence)
+	case "down":
+		conservative *= (1 - 0.02*confidence)
+		moderate *= (1 - 0.01*confidence)
+		aggressive *= (1 - 0.005*confidence)
+	}
+
+	return math.Round(conservative*100) / 100, math.Round(moderate*100) / 100, math.Round(aggressive*100) / 100
 }
 
 // calculateScenarioWithProb 计算单个场景的盈亏（带概率）
@@ -150,7 +195,7 @@ func calculateScenarioWithProb(sellPrice float64, quantity float64, buyCost floa
 		SellIncome:  math.Round(sellIncome*100) / 100,
 		Profit:      math.Round(profit*100) / 100,
 		ProfitRate:  fmt.Sprintf("%.2f%%", profitRate),
-		Probability: fmt.Sprintf("%.0f%%", probability*100),
+		Probability: fmt.Sprintf("%.2f%%", probability*100),
 		Fees: model.TradeFees{
 			BuyCommission:  0,
 			SellCommission: math.Round(sellCommission*100) / 100,

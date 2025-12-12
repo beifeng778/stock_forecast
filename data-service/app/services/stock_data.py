@@ -214,4 +214,31 @@ class StockDataService:
             return None
 
 
+    @staticmethod
+    def get_stock_news(code: str, limit: int = 5) -> List[Dict]:
+        """获取股票公告/新闻（使用东方财富公告接口）"""
+        import json
+        try:
+            url = f"https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size={limit}&page_index=1&ann_type=A&stock_list={code}&f_node=0&s_node=0"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+            session = requests.Session()
+            session.trust_env = False
+            resp = session.get(url, headers=headers, timeout=10)
+            data = resp.json()
+
+            news_list = []
+            items = data.get('data', {}).get('list', [])
+            for item in items[:limit]:
+                news_list.append({
+                    "title": item.get('title', ''),
+                    "time": item.get('notice_date', '')[:10] if item.get('notice_date') else '',
+                    "source": "东方财富",
+                })
+            return news_list
+        except Exception as e:
+            print(f"获取股票新闻失败: {e}")
+        return []
+
+
 stock_data_service = StockDataService()

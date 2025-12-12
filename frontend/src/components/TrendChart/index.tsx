@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { Radio, Spin, Empty, Select, Space } from 'antd';
+import { Spin, Empty, Select, Space } from 'antd';
 import { useStockStore } from '../../store';
 import { getKline } from '../../services/api';
-import type { KlineData, PeriodType } from '../../types';
+import type { KlineData } from '../../types';
 import './index.css';
 
 // 判断A股是否已收盘（15:00收盘）
@@ -14,7 +14,7 @@ const isMarketClosed = (): boolean => {
 };
 
 const TrendChart: React.FC = () => {
-  const { selectedStocks, period, setPeriod, predictions, setPredictionKlines } = useStockStore();
+  const { selectedStocks, predictions, setPredictionKlines } = useStockStore();
   const [currentStock, setCurrentStock] = useState<string>('');
   const [klineData, setKlineData] = useState<KlineData[]>([]);
   const [stockName, setStockName] = useState<string>('');
@@ -44,7 +44,7 @@ const TrendChart: React.FC = () => {
 
       setLoading(true);
       try {
-        const kline = await getKline(currentStock, period);
+        const kline = await getKline(currentStock, 'daily');
         setKlineData(kline.data || []);
         setStockName(kline.name || '');
       } catch (error) {
@@ -56,7 +56,7 @@ const TrendChart: React.FC = () => {
     };
 
     loadData();
-  }, [currentStock, period]);
+  }, [currentStock]);
 
   // 预测K线数据类型
   interface PredictionKline {
@@ -370,12 +370,6 @@ const TrendChart: React.FC = () => {
     };
   };
 
-  const periodOptions = [
-    { label: '日', value: 'daily' },
-    { label: '周', value: 'weekly' },
-    { label: '月', value: 'monthly' },
-  ];
-
   const stockOptions = selectedStocks.map(s => ({
     value: s.code,
     label: `${s.code} ${s.name}`,
@@ -399,14 +393,6 @@ const TrendChart: React.FC = () => {
             />
           )}
         </Space>
-        <Radio.Group
-          options={periodOptions}
-          value={period}
-          onChange={(e) => setPeriod(e.target.value as PeriodType)}
-          optionType="button"
-          buttonStyle="solid"
-          size="small"
-        />
       </div>
 
       <div className="chart-content">

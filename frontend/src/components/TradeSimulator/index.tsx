@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Form,
   Select,
@@ -17,8 +17,8 @@ import {
 import { ArrowUpOutlined, ArrowDownOutlined, SmileOutlined, MehOutlined, FrownOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { useStockStore } from '../../store';
-import { simulateTrade } from '../../services/api';
-import type { TradeSimulateResponse, ScenarioResult } from '../../types';
+import { simulateTrade, getKline } from '../../services/api';
+import type { TradeSimulateResponse, ScenarioResult, KlineData } from '../../types';
 import './index.css';
 
 // 判断是否为工作日（周一到周五）
@@ -65,6 +65,9 @@ const TradeSimulator: React.FC = () => {
   const [result, setResult] = useState<TradeSimulateResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasFutureDate, setHasFutureDate] = useState(false); // 是否包含未来日期
+
+  // 历史K线数据缓存
+  const historyKlinesRef = useRef<Record<string, KlineData[]>>({});
 
   // 计算未来5个工作日的最后一天
   const allowedWorkdays = useMemo(() => getNextWorkdays(5), []);
@@ -140,14 +143,103 @@ const TradeSimulator: React.FC = () => {
     }
   };
 
-  // 选择股票时自动填充当前价格
-  const handleStockChange = (code: string) => {
+  // 加载历史K线数据
+  const loadHistoryKlines = async (code: string) => {
+    if (historyKlinesRef.current[code]) {
+      return historyKlinesRef.current[code];
+    }
+    try {
+      const response = await getKline(code, 'daily');
+      historyKlinesRef.current[code] = response.data || [];
+      return historyKlinesRef.current[code];
+    } catch (error) {
+      console.error('加载历史K线失败:', error);
+      return [];
+    }
+  };
+
+  // 根据日期获取K线价格（同时支持历史和预测K线）
+  const getPriceByDate = (code: string, dateStr: string, priceType: 'open' | 'close'): number | null => {
+    // 先从预测K线中查找
+    const predKlines = predictionKlines[code] || [];
+    const predKline = predKlines.find((k) => k.date === dateStr);
+    if (predKline) {
+      return priceType === 'open' ? predKline.open : predKline.close;
+    }
+
+    // 再从历史K线中查找
+    const histKlines = historyKlinesRef.current[code] || [];
+    const histKline = histKlines.find((k) => k.date === dateStr);
+    if (histKline) {
+      return priceType === 'open' ? histKline.open : histKline.close;
+    }
+
+    return null;
+  };
+
+  // 选择股票时自动填充价格
+  const handleStockChange = async (code: string) => {
     const prediction = predictions.find((p) => p.stock_code === code);
     if (prediction) {
+      // 先加载历史K线数据
+      await loadHistoryKlines(code);
+
+      const buyDate = form.getFieldValue('buy_date');
+      const sellDate = form.getFieldValue('sell_date');
+
+      let buyPrice = prediction.current_price;
+      let expectedPrice = prediction.target_prices.short;
+
+      // 如果已选择买入日期，使用该日期的开盘价
+      if (buyDate) {
+        const dateStr = buyDate.format('YYYY-MM-DD');
+        const price = getPriceByDate(code, dateStr, 'open');
+        if (price !== null) buyPrice = price;
+      }
+
+      // 如果已选择卖出日期，使用该日期的收盘价
+      if (sellDate) {
+        const dateStr = sellDate.format('YYYY-MM-DD');
+        const price = getPriceByDate(code, dateStr, 'close');
+        if (price !== null) expectedPrice = price;
+      }
+
       form.setFieldsValue({
-        buy_price: prediction.current_price,
-        expected_price: prediction.target_prices.short,
+        buy_price: buyPrice,
+        expected_price: expectedPrice,
       });
+    }
+  };
+
+  // 选择买入日期时自动设置买入价格为开盘价
+  const handleBuyDateChange = async (date: Dayjs | null) => {
+    if (!date) return;
+    const code = form.getFieldValue('stock_code');
+    if (!code) return;
+
+    // 确保历史K线已加载
+    await loadHistoryKlines(code);
+
+    const dateStr = date.format('YYYY-MM-DD');
+    const buyPrice = getPriceByDate(code, dateStr, 'open');
+    if (buyPrice !== null) {
+      form.setFieldsValue({ buy_price: buyPrice });
+    }
+  };
+
+  // 选择卖出日期时自动设置预期卖出价格为收盘价
+  const handleSellDateChange = async (date: Dayjs | null) => {
+    if (!date) return;
+    const code = form.getFieldValue('stock_code');
+    if (!code) return;
+
+    // 确保历史K线已加载
+    await loadHistoryKlines(code);
+
+    const dateStr = date.format('YYYY-MM-DD');
+    const expectedPrice = getPriceByDate(code, dateStr, 'close');
+    if (expectedPrice !== null) {
+      form.setFieldsValue({ expected_price: expectedPrice });
     }
   };
 
@@ -268,6 +360,7 @@ const TradeSimulator: React.FC = () => {
                   style={{ width: '100%' }}
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
+                  onChange={handleBuyDateChange}
                 />
               </Form.Item>
             </Col>
@@ -314,6 +407,7 @@ const TradeSimulator: React.FC = () => {
                   style={{ width: '100%' }}
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
+                  onChange={handleSellDateChange}
                 />
               </Form.Item>
             </Col>
@@ -369,38 +463,42 @@ const TradeSimulator: React.FC = () => {
 
             {hasFutureDate ? (
               <>
-                <div className="scenarios-title">四种场景分析（含未来日期）</div>
-                <div className="scenarios-grid">
+                <div className="scenarios-title">盈亏分析</div>
+                {/* 符合预期独占一行 */}
+                <div className="scenarios-row-single">
                   {renderScenario(
                     result.expected,
                     '符合预期',
                     <SmileOutlined />,
                     '#10b981'
                   )}
+                </div>
+                {/* AI分析三种场景占一行 */}
+                <div className="scenarios-row-triple">
                   {renderScenario(
-                    result.day_high,
-                    '当日最高价',
-                    <ArrowUpOutlined />,
-                    '#f59e0b'
+                    result.conservative,
+                    '保守',
+                    <FrownOutlined />,
+                    '#ef4444'
                   )}
                   {renderScenario(
-                    result.day_close,
-                    '当日收盘价',
+                    result.moderate,
+                    '中等',
                     <MehOutlined />,
                     '#6366f1'
                   )}
                   {renderScenario(
-                    result.day_low,
-                    '当日最低价',
-                    <FrownOutlined />,
-                    '#ef4444'
+                    result.aggressive,
+                    '激进',
+                    <ArrowUpOutlined />,
+                    '#f59e0b'
                   )}
                 </div>
               </>
             ) : (
               <>
-                <div className="scenarios-title">预期结果（历史日期）</div>
-                <div className="scenarios-grid">
+                <div className="scenarios-title">盈亏分析</div>
+                <div className="scenarios-row-single">
                   {renderScenario(
                     result.expected,
                     '预期卖出',
