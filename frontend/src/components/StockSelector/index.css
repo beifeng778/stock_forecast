@@ -1,0 +1,121 @@
+.stock-selector {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 16px;
+  padding: 20px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.selector-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.selector-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.selector-header h3::before {
+  content: '';
+  width: 4px;
+  height: 18px;
+  background: linear-gradient(180deg, #6366f1 0%, #8b5cf6 100%);
+  border-radius: 2px;
+}
+
+.selector-search {
+  margin-bottom: 16px;
+}
+
+.selected-stocks {
+  flex: 1;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 12px;
+  padding: 8px;
+  min-height: 200px;
+}
+
+.empty-tip {
+  color: #64748b;
+  text-align: center;
+  padding: 40px 0;
+  font-size: 14px;
+}
+
+.stock-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  transition: all 0.2s ease;
+}
+
+.stock-item:hover {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.3);
+  transform: translateX(4px);
+}
+
+.stock-item:last-child {
+  margin-bottom: 0;
+}
+
+.stock-code {
+  font-weight: 600;
+  margin-right: 10px;
+  color: #818cf8;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.stock-name {
+  flex: 1;
+  color: #e2e8f0;
+  font-size: 14px;
+}
+
+.delete-icon {
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.delete-icon:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.selector-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.selector-actions .ant-btn-primary {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  border: none;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+}
+
+.selector-actions .ant-btn-primary:hover {
+  background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+}

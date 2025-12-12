@@ -1,0 +1,157 @@
+.trade-simulator {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.simulator-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.simulator-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.simulator-header h3::before {
+  content: '';
+  width: 4px;
+  height: 18px;
+  background: linear-gradient(180deg, #10b981 0%, #06b6d4 100%);
+  border-radius: 2px;
+}
+
+.simulator-header .tip {
+  font-size: 12px;
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+}
+
+.simulator-content {
+  min-height: 150px;
+}
+
+.simulator-content .ant-form-item-label > label {
+  color: #e2e8f0;
+}
+
+.result-card {
+  margin-top: 20px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.result-card .ant-statistic-title {
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.result-card .ant-statistic-content {
+  color: #e2e8f0;
+}
+
+.result-card .ant-statistic-content-value {
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.result-card .ant-descriptions-item-label {
+  color: #e2e8f0;
+}
+
+.result-card .ant-descriptions-item-content {
+  color: #e2e8f0;
+}
+
+.simulator-content .ant-btn-primary {
+  background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
+  border: none;
+  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+}
+
+.simulator-content .ant-btn-primary:hover {
+  background: linear-gradient(135deg, #34d399 0%, #22d3ee 100%);
+}
+
+.result-section {
+  margin-top: 20px;
+}
+
+.scenarios-title {
+  margin: 16px 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.scenario-card {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 10px;
+  border-width: 2px;
+}
+
+.scenario-card .ant-card-body {
+  padding: 12px;
+}
+
+.scenario-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.scenario-header .anticon {
+  font-size: 16px;
+}
+
+.scenario-card .ant-statistic-title {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.scenario-card .ant-statistic-content {
+  color: #e2e8f0;
+}
+
+.scenario-card .ant-statistic-content-value {
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 14px;
+}
+
+.scenario-fees {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(99, 102, 241, 0.2);
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+@media (max-width: 768px) {
+  .scenarios-grid {
+    grid-template-columns: 1fr;
+  }
+}

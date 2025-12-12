@@ -1,0 +1,157 @@
+// 股票基本信息
+export interface Stock {
+  code: string;
+  name: string;
+  market: 'SH' | 'SZ';
+}
+
+// K线数据
+export interface KlineData {
+  date: string;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  volume: number;
+  amount: number;
+}
+
+// K线响应
+export interface KlineResponse {
+  code: string;
+  name: string;
+  period: string;
+  data: KlineData[];
+}
+
+// 技术指标
+export interface TechnicalIndicators {
+  ma5: number;
+  ma10: number;
+  ma20: number;
+  ma60: number;
+  macd: number;
+  signal: number;
+  hist: number;
+  rsi: number;
+  kdj_k: number;
+  kdj_d: number;
+  kdj_j: number;
+  boll_upper: number;
+  boll_middle: number;
+  boll_lower: number;
+}
+
+// 技术信号
+export interface Signal {
+  name: string;
+  type: 'bullish' | 'bearish' | 'neutral';
+  type_cn: string;
+  desc: string;
+}
+
+// ML预测结果
+export interface MLPrediction {
+  trend: string;
+  price: number;
+  confidence: number;
+}
+
+// ML预测集合
+export interface MLPredictions {
+  lstm: MLPrediction;
+  prophet: MLPrediction;
+  xgboost: MLPrediction;
+}
+
+// 价格区间
+export interface PriceRange {
+  low: number;
+  high: number;
+}
+
+// 目标价位
+export interface TargetPrices {
+  short: number;
+  medium: number;
+  long: number;
+}
+
+// 预测结果
+export interface PredictResult {
+  stock_code: string;
+  stock_name: string;
+  current_price: number;
+  trend: string;
+  trend_cn: string;
+  confidence: number;
+  price_range: PriceRange;
+  target_prices: TargetPrices;
+  support_level: number;
+  resistance_level: number;
+  indicators: TechnicalIndicators;
+  signals: Signal[];
+  analysis: string;
+  ml_predictions: MLPredictions;
+}
+
+// 预测请求
+export interface PredictRequest {
+  stock_codes: string[];
+  period: string;
+}
+
+// 预测响应
+export interface PredictResponse {
+  results: PredictResult[];
+}
+
+// 交易费用
+export interface TradeFees {
+  buy_commission: number;
+  sell_commission: number;
+  stamp_tax: number;
+  transfer_fee: number;
+  total_fees: number;
+}
+
+// 委托模拟请求
+export interface TradeSimulateRequest {
+  stock_code: string;
+  buy_price: number;
+  buy_date: string;
+  expected_price: number;        // 预期卖出价格（乐观情况）
+  predicted_mid_price: number;   // 预测中位数价格（中性情况）
+  predicted_low_price: number;   // 预测最低价格（悲观情况）
+  confidence: number;            // 预测置信度 (0-1)
+  trend: string;                 // 预测趋势 (up/down/sideways)
+  sell_date: string;
+  quantity: number;
+}
+
+// 场景结果
+export interface ScenarioResult {
+  sell_price: number;
+  sell_income: number;
+  profit: number;
+  profit_rate: string;
+  probability: string;  // 出现概率
+  fees: TradeFees;
+}
+
+// 委托模拟响应
+export interface TradeSimulateResponse {
+  stock_code: string;
+  stock_name: string;
+  buy_price: number;
+  expected_price: number;
+  quantity: number;
+  buy_cost: number;
+  buy_fees: TradeFees;
+  optimistic: ScenarioResult;   // 乐观情况
+  neutral: ScenarioResult;      // 中性情况
+  pessimistic: ScenarioResult;  // 悲观情况
+}
+
+// 周期类型
+export type PeriodType = 'daily' | 'weekly' | 'monthly';

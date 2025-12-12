@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create vite:*)",
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(go mod:*)",
+      "Bash(go get:*)",
+      "Bash(chmod:*)",
+      "Bash(python:*)",
+      "Bash(source:*)",
+      "Bash(tasklist:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(curl:*)",
+      "Bash(go build:*)",
+      "Bash(./server.exe:*)",
+      "Bash(findstr:*)"
+    ]
+  }
+}
