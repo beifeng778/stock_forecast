@@ -412,7 +412,7 @@ const TradeSimulator: React.FC = () => {
           </Form.Item>
 
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <Form.Item
                 name="buy_price"
                 label="买入价格"
@@ -427,7 +427,7 @@ const TradeSimulator: React.FC = () => {
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <Form.Item
                 name="buy_date"
                 label="买入日期"
@@ -439,10 +439,11 @@ const TradeSimulator: React.FC = () => {
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
                   onChange={handleBuyDateChange}
+                  inputReadOnly
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <Form.Item
                 name="quantity"
                 label="数量(股)"
@@ -459,7 +460,7 @@ const TradeSimulator: React.FC = () => {
           </Row>
 
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <Form.Item
                 name="expected_price"
                 label="预期卖出价格"
@@ -474,7 +475,7 @@ const TradeSimulator: React.FC = () => {
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <Form.Item
                 name="sell_date"
                 label="卖出日期"
@@ -486,11 +487,12 @@ const TradeSimulator: React.FC = () => {
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
                   onChange={handleSellDateChange}
+                  inputReadOnly
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item label=" ">
+            <Col xs={24} sm={8}>
+              <Form.Item label=" " className="submit-btn-item">
                 <Button
                   type="primary"
                   htmlType="submit"
@@ -506,34 +508,40 @@ const TradeSimulator: React.FC = () => {
 
         {tradeResult && (
           <div className="result-section">
-            <Card className="result-card" size="small">
-              <Row gutter={16}>
-                <Col span={8}>
-                  <Statistic
-                    title="买入成本"
-                    value={tradeResult.buy_cost}
-                    precision={2}
-                    suffix="元"
-                  />
+            <Card className="result-card">
+              <Row gutter={[24, 16]} justify="space-around">
+                <Col xs={24} sm={8}>
+                  <div className="stat-item">
+                    <div className="stat-label">买入成本</div>
+                    <div className="stat-value">
+                      {tradeResult.buy_cost.toLocaleString("zh-CN", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                      <span className="stat-unit">元</span>
+                    </div>
+                  </div>
                 </Col>
-                <Col span={8}>
-                  <Statistic
-                    title="预期卖出价格"
-                    value={tradeResult.expected_price}
-                    precision={2}
-                    suffix="元/股"
-                  />
+                <Col xs={12} sm={8}>
+                  <div className="stat-item">
+                    <div className="stat-label">预期卖出价格</div>
+                    <div className="stat-value">
+                      {tradeResult.expected_price.toFixed(2)}
+                      <span className="stat-unit">元/股</span>
+                    </div>
+                  </div>
                 </Col>
-                <Col span={8}>
-                  <Statistic
-                    title="买入费用"
-                    value={tradeResult.buy_fees.total_fees}
-                    precision={2}
-                    suffix="元"
-                  />
+                <Col xs={12} sm={8}>
+                  <div className="stat-item">
+                    <div className="stat-label">买入费用</div>
+                    <div className="stat-value">
+                      {tradeResult.buy_fees.total_fees.toFixed(2)}
+                      <span className="stat-unit">元</span>
+                    </div>
+                  </div>
                 </Col>
               </Row>
-              <div style={{ marginTop: 12, fontSize: 12, color: "#e2e8f0" }}>
+              <div className="fees-detail">
                 买入费用明细: 佣金{" "}
                 {tradeResult.buy_fees.buy_commission.toFixed(2)}元 | 过户费{" "}
                 {tradeResult.buy_fees.transfer_fee.toFixed(2)}元

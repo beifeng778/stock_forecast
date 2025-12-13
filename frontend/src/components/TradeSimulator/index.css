@@ -57,17 +57,42 @@
   padding: 20px;
 }
 
-.result-card .ant-statistic-title {
-  color: #e2e8f0;
-  font-size: 12px;
+.result-card .ant-card-body {
+  padding: 16px 20px;
 }
 
-.result-card .ant-statistic-content {
-  color: #e2e8f0;
+.stat-item {
+  text-align: center;
+  padding: 8px 0;
 }
 
-.result-card .ant-statistic-content-value {
+.stat-label {
+  color: #94a3b8;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  color: #e2e8f0;
+  font-size: 22px;
   font-family: 'Monaco', 'Menlo', monospace;
+  font-weight: 600;
+}
+
+.stat-unit {
+  font-size: 13px;
+  color: #94a3b8;
+  margin-left: 4px;
+  font-weight: 400;
+}
+
+.fees-detail {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(99, 102, 241, 0.2);
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
 }
 
 .result-card .ant-descriptions-item-label {
@@ -189,5 +214,92 @@
 
   .scenario-fees {
     font-size: 10px;
+  }
+
+  /* 移动端表单布局优化 */
+  .simulator-content .ant-form-item {
+    margin-bottom: 12px;
+  }
+
+  .simulator-content .ant-form-item-label {
+    padding-bottom: 4px;
+  }
+
+  .simulator-content .ant-form-item-label > label {
+    font-size: 12px;
+    height: auto;
+  }
+
+  /* 移动端结果卡片优化 */
+  .result-card {
+    padding: 12px;
+  }
+
+  .result-card .ant-card-body {
+    padding: 12px;
+  }
+
+  .stat-item {
+    padding: 6px 0;
+  }
+
+  .stat-label {
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+
+  .stat-value {
+    font-size: 18px;
+  }
+
+  .stat-unit {
+    font-size: 11px;
+  }
+
+  .fees-detail {
+    margin-top: 12px;
+    padding-top: 10px;
+    font-size: 11px;
+  }
+
+  /* 移动端日期选择器优化 */
+  .simulator-content .ant-picker {
+    width: 100%;
+  }
+
+  .simulator-content .ant-picker-input > input {
+    font-size: 13px;
+  }
+
+  /* 移动端按钮行对齐 */
+  .simulator-content .submit-btn-item {
+    margin-top: 0;
+  }
+
+  .simulator-content .submit-btn-item .ant-form-item-label {
+    display: none;
+  }
+}
+
+/* 全局日期选择器弹出层优化 */
+.ant-picker-dropdown {
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+@media (max-width: 768px) {
+  .ant-picker-dropdown {
+    width: calc(100vw - 32px) !important;
+    max-width: 320px;
+  }
+
+  .ant-picker-dropdown .ant-picker-panel-container {
+    width: 100%;
+  }
+
+  .ant-picker-dropdown .ant-picker-date-panel {
+    width: 100%;
   }
 }

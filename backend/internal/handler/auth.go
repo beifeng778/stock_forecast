@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"stock-forecast-backend/internal/scheduler"
 	"strconv"
 	"strings"
 	"time"
@@ -27,27 +28,30 @@ func init() {
 	}
 }
 
-// generateToken 生成token: timestamp.signature
+// generateToken 生成token: timestamp.codeVersion.signature
 func generateToken() string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	codeVersion := strconv.FormatInt(scheduler.GetCodeVersion(), 10)
+	data := timestamp + "." + codeVersion
 	h := hmac.New(sha256.New, []byte(tokenSecret))
-	h.Write([]byte(timestamp))
+	h.Write([]byte(data))
 	signature := hex.EncodeToString(h.Sum(nil))
-	return fmt.Sprintf("%s.%s", timestamp, signature)
+	return fmt.Sprintf("%s.%s.%s", timestamp, codeVersion, signature)
 }
 
 // ValidateToken 验证token
 func ValidateToken(token string) bool {
 	parts := strings.Split(token, ".")
-	if len(parts) != 2 {
+	if len(parts) != 3 {
 		return false
 	}
 
-	timestamp, signature := parts[0], parts[1]
+	timestamp, tokenCodeVersion, signature := parts[0], parts[1], parts[2]
 
 	// 验证签名
+	data := timestamp + "." + tokenCodeVersion
 	h := hmac.New(sha256.New, []byte(tokenSecret))
-	h.Write([]byte(timestamp))
+	h.Write([]byte(data))
 	expectedSig := hex.EncodeToString(h.Sum(nil))
 	if signature != expectedSig {
 		return false
@@ -59,6 +63,16 @@ func ValidateToken(token string) bool {
 		return false
 	}
 	if time.Now().Unix()-ts > 7*24*3600 {
+		return false
+	}
+
+	// 验证验证码版本号是否匹配（验证码更换后旧Token失效）
+	currentVersion := scheduler.GetCodeVersion()
+	tokenVersion, err := strconv.ParseInt(tokenCodeVersion, 10, 64)
+	if err != nil {
+		return false
+	}
+	if tokenVersion != currentVersion {
 		return false
 	}
 
@@ -76,7 +90,8 @@ func VerifyInviteCode(c *gin.Context) {
 		return
 	}
 
-	inviteCode := os.Getenv("INVITE_CODE")
+	// 使用动态验证码
+	inviteCode := scheduler.GetCurrentInviteCode()
 	if inviteCode == "" {
 		// 如果没有配置邀请码，直接通过
 		token := generateToken()
@@ -106,8 +121,8 @@ func VerifyInviteCode(c *gin.Context) {
 // AuthMiddleware 认证中间件
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 如果没有配置邀请码，跳过验证
-		if os.Getenv("INVITE_CODE") == "" {
+		// 如果没有验证码（未启动scheduler），跳过验证
+		if scheduler.GetCurrentInviteCode() == "" {
 			c.Next()
 			return
 		}

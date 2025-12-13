@@ -110,6 +110,15 @@ const TrendChart: React.FC = () => {
     let dayIndex = 0;
 
     const totalDays = 5;
+    // 生成随机波动因子，让曲线更自然
+    const randomFactors: number[] = [];
+    for (let i = 0; i < totalDays; i++) {
+      // 生成-0.3到0.3之间的随机波动
+      randomFactors.push((Math.random() - 0.5) * 0.6);
+    }
+    // 确保最后一天接近目标价
+    randomFactors[totalDays - 1] = 0;
+
     while (predictionKlines.length < totalDays) {
       // 跳过周末
       while (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
@@ -119,10 +128,21 @@ const TrendChart: React.FC = () => {
       dates.push(dateStr);
       dayIndex++;
 
-      const targetClose =
-        lastPrice + (targetPrice - lastPrice) * (dayIndex / totalDays);
+      // 使用缓动函数让曲线更自然（ease-in-out效果）
+      const progress = dayIndex / totalDays;
+      const easedProgress =
+        progress < 0.5
+          ? 2 * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+      // 基础目标价 + 随机波动
+      const baseTarget = lastPrice + (targetPrice - lastPrice) * easedProgress;
+      const randomWave =
+        (targetPrice - lastPrice) * randomFactors[dayIndex - 1];
+      const targetClose = baseTarget + randomWave;
+
       const volatilityFactor = avgVolatility * (1.2 - confidence * 0.4);
-      const gapFactor = (Math.random() - 0.5) * 0.01;
+      const gapFactor = (Math.random() - 0.5) * 0.015;
       const open = prevClose * (1 + gapFactor);
       const close = targetClose;
 
@@ -251,25 +271,31 @@ const TrendChart: React.FC = () => {
       });
     }
 
+    // 检测是否为移动端
+    const isMobile = window.innerWidth <= 768;
+
     return {
       title: {
         text: `${currentStock} ${stockName}`,
         left: "center",
         top: 5,
         textStyle: {
-          fontSize: 14,
+          fontSize: isMobile ? 12 : 14,
           fontWeight: "normal",
           color: "#e2e8f0",
         },
       },
       legend: {
         show: predictionData !== null,
-        top: 5,
-        right: 10,
+        top: 25,
+        left: "center",
         textStyle: {
           color: "#e2e8f0",
-          fontSize: 11,
+          fontSize: isMobile ? 10 : 11,
         },
+        itemWidth: isMobile ? 15 : 25,
+        itemHeight: isMobile ? 10 : 14,
+        itemGap: 10,
       },
       tooltip: {
         trigger: "axis",
@@ -337,7 +363,7 @@ const TrendChart: React.FC = () => {
         left: "3%",
         right: "4%",
         bottom: "15%",
-        top: 45,
+        top: 50,
         containLabel: true,
       },
       xAxis: {

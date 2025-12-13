@@ -6,9 +6,11 @@ import (
 	"os"
 	"strings"
 
+	"stock-forecast-backend/internal/handler"
+	"stock-forecast-backend/internal/scheduler"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"stock-forecast-backend/internal/handler"
 )
 
 func init() {
@@ -72,6 +74,9 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	// 启动定时任务（验证码轮换）
+	scheduler.StartScheduler()
 
 	log.Printf("服务启动在端口 %s", port)
 	if err := r.Run(":" + port); err != nil {
