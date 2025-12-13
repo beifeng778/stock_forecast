@@ -263,7 +263,7 @@ const TrendChart: React.FC = () => {
         lineStyle: {
           width: 2,
           color: "#f59e0b",
-          type: "dashed",
+          type: [5, 5],
         },
         itemStyle: {
           color: "#f59e0b",
@@ -293,9 +293,9 @@ const TrendChart: React.FC = () => {
           color: "#e2e8f0",
           fontSize: isMobile ? 10 : 11,
         },
-        itemWidth: isMobile ? 15 : 25,
-        itemHeight: isMobile ? 10 : 14,
-        itemGap: 10,
+        itemWidth: 25,
+        itemHeight: 14,
+        itemGap: 15,
       },
       tooltip: {
         trigger: "axis",
@@ -416,6 +416,8 @@ const TrendChart: React.FC = () => {
           },
           borderColor: "rgba(99, 102, 241, 0.3)",
           fillerColor: "rgba(99, 102, 241, 0.2)",
+          showDataShadow: false,
+          brushSelect: false,
         },
       ],
       series,

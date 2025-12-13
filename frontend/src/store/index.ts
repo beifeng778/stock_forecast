@@ -34,6 +34,7 @@ interface StockStore {
   addStock: (stock: Stock) => void;
   removeStock: (code: string) => void;
   clearStocks: () => void;
+  updateStockNames: (stockMap: Map<string, Stock>) => void;
 
   // 当前周期
   period: PeriodType;
@@ -82,7 +83,7 @@ export const useStockStore = create<StockStore>()(
       addStock: (stock) => {
         const { selectedStocks } = get();
         if (!selectedStocks.find((s) => s.code === stock.code)) {
-          set({ selectedStocks: [...selectedStocks, stock] });
+          set({ selectedStocks: [stock, ...selectedStocks] });
         }
       },
       removeStock: (code) => {
@@ -90,6 +91,20 @@ export const useStockStore = create<StockStore>()(
         set({ selectedStocks: selectedStocks.filter((s) => s.code !== code) });
       },
       clearStocks: () => set({ selectedStocks: [] }),
+      updateStockNames: (stockMap) => {
+        const { selectedStocks, predictions } = get();
+        // 更新已选择股票的名称
+        const updatedStocks = selectedStocks.map((s) => {
+          const newStock = stockMap.get(s.code);
+          return newStock ? { ...s, name: newStock.name } : s;
+        });
+        // 更新预测结果中的股票名称
+        const updatedPredictions = predictions.map((p) => {
+          const newStock = stockMap.get(p.stock_code);
+          return newStock ? { ...p, stock_name: newStock.name } : p;
+        });
+        set({ selectedStocks: updatedStocks, predictions: updatedPredictions });
+      },
 
       period: "daily",
       setPeriod: (period) => set({ period }),

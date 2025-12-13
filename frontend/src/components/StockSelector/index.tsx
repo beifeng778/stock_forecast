@@ -66,6 +66,7 @@ const StockSelector: React.FC = () => {
     clearPredictions,
     clearTradeData,
     clearAllData,
+    updateStockNames,
   } = useStockStore();
 
   // 开始冷却倒计时
@@ -122,6 +123,11 @@ const StockSelector: React.FC = () => {
       try {
         const result = await getStocks("", forceRefresh);
         setAllStocks(result || []);
+        // 同步更新已选择股票和预测结果中的名称
+        if (result && result.length > 0) {
+          const stockMap = new Map(result.map((s) => [s.code, s]));
+          updateStockNames(stockMap);
+        }
         if (forceRefresh) {
           message.success("股票列表已增量更新");
           startCooldown(); // 刷新后开始冷却
@@ -134,7 +140,7 @@ const StockSelector: React.FC = () => {
         setInitialLoading(false);
       }
     },
-    [startCooldown]
+    [startCooldown, updateStockNames]
   );
 
   // 组件挂载时加载股票列表
