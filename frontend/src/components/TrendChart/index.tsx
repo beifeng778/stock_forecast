@@ -309,6 +309,19 @@ const TrendChart: React.FC = () => {
           if (idx < klineData.length) {
             const data = klineData[idx];
             if (!data) return "";
+
+            // 计算历史数据涨跌幅
+            let histChangePercent = 0;
+            if (idx > 0 && klineData[idx - 1]?.close > 0) {
+              histChangePercent =
+                ((data.close - klineData[idx - 1].close) /
+                  klineData[idx - 1].close) *
+                100;
+            }
+            const histChangeColor =
+              histChangePercent >= 0 ? "#f5222d" : "#52c41a";
+            const histChangeSign = histChangePercent >= 0 ? "+" : "";
+
             return `
               <div style="font-size:12px">
                 <div style="font-weight:bold;margin-bottom:4px">${
@@ -321,6 +334,13 @@ const TrendChart: React.FC = () => {
                 <div>成交量: ${
                   data.volume ? (data.volume / 10000).toFixed(0) + "万" : "-"
                 }</div>
+                ${
+                  idx > 0
+                    ? `<div style="color:${histChangeColor};font-weight:bold">涨跌幅: ${histChangeSign}${histChangePercent.toFixed(
+                        2
+                      )}%</div>`
+                    : ""
+                }
               </div>
             `;
           } else {
@@ -333,6 +353,22 @@ const TrendChart: React.FC = () => {
             const isToday = predKline.date === today;
             const label = isToday ? "AI预测（今日未收盘）" : "AI预测";
             const suffix = isToday ? "（预测值）" : "";
+
+            // 计算涨跌幅
+            let changePercent = 0;
+            let prevClose = 0;
+            if (predIdx === 0 && klineData.length > 0) {
+              // 第一个预测点，用最后一个历史数据的收盘价
+              prevClose = klineData[klineData.length - 1].close;
+            } else if (predIdx > 0 && predictionData?.klines[predIdx - 1]) {
+              prevClose = predictionData.klines[predIdx - 1].close;
+            }
+            if (prevClose > 0) {
+              changePercent = ((predKline.close - prevClose) / prevClose) * 100;
+            }
+            const changeColor = changePercent >= 0 ? "#f5222d" : "#52c41a";
+            const changeSign = changePercent >= 0 ? "+" : "";
+
             return `
               <div style="font-size:12px">
                 <div style="font-weight:bold;margin-bottom:4px;color:#f59e0b">${label} ${
@@ -345,6 +381,9 @@ const TrendChart: React.FC = () => {
                 <div>成交量: ${(predKline.volume / 10000).toFixed(
                   0
                 )}万${suffix}</div>
+                <div style="color:${changeColor};font-weight:bold">AI预测涨跌幅: ${changeSign}${changePercent.toFixed(
+              2
+            )}%</div>
                 ${
                   pred
                     ? `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(

@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,31 +126,79 @@ func TestSendMail() error {
 	return mail.SendMail(to, "【股票预测系统】邮件测试", "<h1>邮件发送测试成功！</h1>")
 }
 
-// StartStockCacheRefreshScheduler 启动股票缓存刷新定时任务（每天凌晨4点）
+// StartStockCacheRefreshScheduler 启动股票缓存刷新定时任务
 func StartStockCacheRefreshScheduler() {
+	// 读取配置
+	refreshTime := os.Getenv("STOCK_CACHE_REFRESH_TIME")
+	if refreshTime == "" {
+		refreshTime = "04:00"
+	}
+
+	retryCount := 3
+	if v := os.Getenv("STOCK_CACHE_RETRY_COUNT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			retryCount = n
+		}
+	}
+
+	retryInterval := 10 // 分钟
+	if v := os.Getenv("STOCK_CACHE_RETRY_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			retryInterval = n
+		}
+	}
+
+	// 解析刷新时间
+	parts := strings.Split(refreshTime, ":")
+	hour, minute := 4, 0
+	if len(parts) == 2 {
+		if h, err := strconv.Atoi(parts[0]); err == nil {
+			hour = h
+		}
+		if m, err := strconv.Atoi(parts[1]); err == nil {
+			minute = m
+		}
+	}
+
 	go func() {
 		for {
 			now := time.Now()
-			// 计算下一个凌晨4点的时间
-			next4AM := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, now.Location())
-			if now.After(next4AM) {
-				// 如果当前时间已过今天4点，则设置为明天4点
-				next4AM = next4AM.Add(24 * time.Hour)
+			// 计算下一个刷新时间
+			nextRefresh := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+			if now.After(nextRefresh) {
+				nextRefresh = nextRefresh.Add(24 * time.Hour)
 			}
 
-			duration := next4AM.Sub(now)
-			log.Printf("股票缓存将在 %s 刷新（%v 后）", next4AM.Format("2006-01-02 15:04:05"), duration.Round(time.Minute))
+			duration := nextRefresh.Sub(now)
+			log.Printf("股票缓存将在 %s 刷新（%v 后）", nextRefresh.Format("2006-01-02 15:04:05"), duration.Round(time.Minute))
 
-			// 等待到凌晨4点
 			time.Sleep(duration)
 
-			// 执行全量刷新
-			log.Println("开始刷新股票缓存...")
-			if _, err := stockdata.RefreshStockCache(); err != nil {
-				log.Printf("刷新股票缓存失败: %v", err)
-			} else {
-				log.Println("股票缓存刷新完成")
-			}
+			// 执行刷新（带重试）
+			refreshWithRetry(retryCount, retryInterval)
 		}
 	}()
+}
+
+// refreshWithRetry 带重试的刷新
+func refreshWithRetry(maxRetry, intervalMinutes int) {
+	for i := 0; i <= maxRetry; i++ {
+		if i > 0 {
+			log.Printf("第 %d 次重试刷新股票缓存...", i)
+		} else {
+			log.Println("开始刷新股票缓存...")
+		}
+
+		if _, err := stockdata.RefreshStockCache(); err != nil {
+			log.Printf("刷新股票缓存失败: %v", err)
+			if i < maxRetry {
+				log.Printf("将在 %d 分钟后重试", intervalMinutes)
+				time.Sleep(time.Duration(intervalMinutes) * time.Minute)
+			}
+		} else {
+			log.Println("股票缓存刷新完成")
+			return
+		}
+	}
+	log.Printf("股票缓存刷新失败，已重试 %d 次", maxRetry)
 }

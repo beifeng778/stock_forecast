@@ -78,11 +78,19 @@ export interface TargetPrices {
   long: number;
 }
 
+// 每日涨跌幅
+export interface DailyChange {
+  date: string;
+  change: number;
+  close: number;
+}
+
 // 预测结果
 export interface PredictResult {
   stock_code: string;
   stock_name: string;
-  industry?: string;
+  sector?: string; // 板块
+  industry?: string; // 主营业务行业
   current_price: number;
   trend: string;
   trend_cn: string;
@@ -95,6 +103,7 @@ export interface PredictResult {
   signals: Signal[];
   analysis: string;
   ml_predictions: MLPredictions;
+  daily_changes?: DailyChange[]; // 近期每日涨跌幅
 }
 
 // 预测请求

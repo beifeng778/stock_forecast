@@ -12,6 +12,30 @@ import "./index.css";
 
 const { Panel } = Collapse;
 
+// 标签颜色列表
+const TAG_COLORS = [
+  "magenta",
+  "red",
+  "volcano",
+  "orange",
+  "gold",
+  "lime",
+  "green",
+  "cyan",
+  "blue",
+  "geekblue",
+  "purple",
+];
+
+// 根据文本生成固定颜色索引
+const getColorIndex = (text: string): number => {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash) % TAG_COLORS.length;
+};
+
 // 趋势图标
 const TrendIcon: React.FC<{ trend: string }> = ({ trend }) => {
   if (trend === "up") {
@@ -51,9 +75,12 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
         <div className="stock-info">
           <span className="stock-code">{result.stock_code}</span>
           <span className="stock-name">{result.stock_name}</span>
-          {result.industry && (
-            <Tag color="purple" className="industry-tag">
-              {result.industry}
+          {result.sector && (
+            <Tag
+              color={TAG_COLORS[getColorIndex(result.sector)]}
+              className="sector-tag"
+            >
+              {result.sector}
             </Tag>
           )}
         </div>
@@ -194,6 +221,38 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                   <div>长期(60日): {result.target_prices.long.toFixed(2)}</div>
                 </div>
               </div>
+
+              {result.daily_changes &&
+                result.daily_changes.length > 0 &&
+                (() => {
+                  // 过滤掉当天未收盘的数据，只取已收盘的最近5天
+                  const today = new Date().toISOString().split("T")[0];
+                  const closedDays = result.daily_changes.filter(
+                    (item) => item.date < today
+                  );
+                  const last5Days = closedDays.slice(-5);
+                  if (last5Days.length === 0) return null;
+                  return (
+                    <div className="daily-changes">
+                      <h4>近期涨跌幅</h4>
+                      <div className="daily-changes-list">
+                        {last5Days.map((item, index) => (
+                          <div key={index} className="daily-change-item">
+                            <span className="date">{item.date.slice(5)}</span>
+                            <span
+                              className={`change ${
+                                item.change >= 0 ? "up" : "down"
+                              }`}
+                            >
+                              {item.change >= 0 ? "+" : ""}
+                              {item.change.toFixed(2)}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
             </div>
           </Panel>
         </Collapse>

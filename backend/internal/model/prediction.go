@@ -6,11 +6,19 @@ type PredictRequest struct {
 	Period     string   `json:"period"` // daily, weekly, monthly
 }
 
+// DailyChange 每日涨跌幅
+type DailyChange struct {
+	Date   string  `json:"date"`   // 日期
+	Change float64 `json:"change"` // 涨跌幅(%)
+	Close  float64 `json:"close"`  // 收盘价
+}
+
 // PredictResult 预测结果
 type PredictResult struct {
 	StockCode       string              `json:"stock_code"`
 	StockName       string              `json:"stock_name"`
-	Industry        string              `json:"industry"`
+	Sector          string              `json:"sector"`   // 板块
+	Industry        string              `json:"industry"` // 主营业务行业
 	CurrentPrice    float64             `json:"current_price"`
 	Trend           string              `json:"trend"`            // up, down, sideways
 	TrendCN         string              `json:"trend_cn"`         // 看涨, 看跌, 震荡
@@ -23,6 +31,7 @@ type PredictResult struct {
 	Signals         []Signal            `json:"signals"`          // 技术信号
 	Analysis        string              `json:"analysis"`         // AI分析
 	MLPredictions   MLPredictions       `json:"ml_predictions"`   // ML模型预测
+	DailyChanges    []DailyChange       `json:"daily_changes"`    // 近期每日涨跌幅
 }
 
 // PriceRange 价格区间

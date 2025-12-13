@@ -37,9 +37,16 @@
 }
 
 .predictions-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 20px;
+  align-items: flex-start;
+}
+
+.predictions-grid .prediction-card {
+  flex: 1 1 calc(33.333% - 14px);
+  min-width: 380px;
+  max-width: 100%;
 }
 
 .prediction-card {
@@ -78,11 +85,19 @@
   font-size: 14px;
 }
 
+.stock-info .sector-tag {
+  margin-left: 12px;
+  font-size: 14px;
+  padding: 2px 8px;
+  line-height: 20px;
+  border-radius: 4px;
+}
+
 .stock-info .industry-tag {
-  margin-left: 8px;
-  font-size: 11px;
-  padding: 0 6px;
-  line-height: 18px;
+  margin-left: 6px;
+  font-size: 14px;
+  padding: 2px 8px;
+  line-height: 20px;
   border-radius: 4px;
 }
 
@@ -183,15 +198,25 @@
 .signals-section {
   margin-bottom: 12px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.signals-section::-webkit-scrollbar {
+  display: none;
 }
 
 .signals-section .ant-tag {
   border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 3px 6px;
+  font-size: 11px;
   border: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .analysis-content {
@@ -318,8 +343,12 @@
   }
 
   .predictions-grid {
-    grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .predictions-grid .prediction-card {
+    flex: 0 0 100%;
+    min-width: auto;
   }
 
   .card-header {
@@ -347,4 +376,61 @@
     grid-template-columns: 1fr;
     gap: 6px;
   }
+}
+
+/* 近期涨跌幅 */
+.daily-changes {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.daily-changes h4 {
+  color: #a5b4fc;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.daily-changes-list {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.daily-changes-list::-webkit-scrollbar {
+  display: none;
+}
+
+.daily-change-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  min-width: 60px;
+  flex: 1 0 auto;
+}
+
+.daily-change-item .date {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.daily-change-item .change {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.daily-change-item .change.up {
+  color: #f5222d;
+}
+
+.daily-change-item .change.down {
+  color: #52c41a;
 }

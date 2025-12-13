@@ -25,6 +25,11 @@ type Indicators struct {
 	SupportLevel    float64  `json:"support_level"`
 	ResistanceLevel float64  `json:"resistance_level"`
 	Signals         []Signal `json:"signals"`
+	// 动量指标
+	Change1D  float64 `json:"change_1d"`  // 1日涨跌幅
+	Change5D  float64 `json:"change_5d"`  // 5日涨跌幅
+	Change10D float64 `json:"change_10d"` // 10日涨跌幅
+	MA5Slope  float64 `json:"ma5_slope"`  // MA5斜率
 }
 
 // Signal 信号
@@ -78,6 +83,25 @@ func CalculateIndicators(data []KlineData) (*Indicators, error) {
 	lookback := min(20, n)
 	ind.SupportLevel = minSlice(lows[n-lookback:])
 	ind.ResistanceLevel = maxSlice(highs[n-lookback:])
+
+	// 动量指标
+	if n >= 2 {
+		ind.Change1D = (closes[n-1] - closes[n-2]) / closes[n-2] * 100
+	}
+	if n >= 6 {
+		ind.Change5D = (closes[n-1] - closes[n-6]) / closes[n-6] * 100
+	}
+	if n >= 11 {
+		ind.Change10D = (closes[n-1] - closes[n-11]) / closes[n-11] * 100
+	}
+	// MA5斜率（最近3天MA5的变化率）
+	if n >= 8 {
+		ma5Today := calculateMA(closes, 5)
+		ma5_3DaysAgo := calculateMA(closes[:n-3], 5)
+		if ma5_3DaysAgo > 0 {
+			ind.MA5Slope = (ma5Today - ma5_3DaysAgo) / ma5_3DaysAgo * 100
+		}
+	}
 
 	// 生成信号
 	ind.Signals = generateSignals(ind)

@@ -132,7 +132,12 @@ const StockSelector: React.FC = () => {
           message.success("股票列表已增量更新");
           startCooldown(); // 刷新后开始冷却
         }
-      } catch (error) {
+      } catch (error: unknown) {
+        // 401错误会触发页面刷新，不需要显示错误提示和倒计时
+        const axiosError = error as { response?: { status?: number } };
+        if (axiosError.response?.status === 401) {
+          return;
+        }
         console.error("加载股票列表失败:", error);
         message.error("第三方数据接口异常，请稍后再试");
         // 失败时启动2分钟倒计时

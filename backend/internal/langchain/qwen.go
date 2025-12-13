@@ -228,3 +228,128 @@ func getRSI区间(rsi float64) string {
 	}
 	return "正常"
 }
+
+// StockClassification 股票分类信息
+type StockClassification struct {
+	Sector   string `json:"sector"`   // 板块
+	Industry string `json:"industry"` // 主营业务行业
+}
+
+// GetStockClassification 使用LLM获取股票板块和行业
+func GetStockClassification(code, name string) StockClassification {
+	if dashscopeAPIKey == "" {
+		return StockClassification{}
+	}
+
+	req := QwenRequest{
+		Model: llmModel,
+	}
+	req.Input.Messages = []Message{
+		{
+			Role: "system",
+			Content: `你是一个股票数据助手。请返回股票在同花顺中所属的行业板块，格式为JSON：{"sector":"行业板块"}
+
+同花顺行业板块示例：
+半导体、芯片、光刻机、存储、消费电子、面板、LED、电子元件
+证券、银行、保险、多元金融
+房地产开发、房地产服务、物业管理
+医药商业、医疗器械、中药、化学制药、生物制品
+软件服务、互联网、云计算、网络安全、人工智能、大数据
+通信设备、通信服务、5G、物联网
+机场航运、航空、铁路、公路、港口、物流
+汽车整车、汽车零部件、新能源车
+光伏、风电、储能、锂电池、充电桩
+白酒、啤酒、乳业、调味品、休闲食品
+养殖、种植、饲料、农药
+军工、航天航空、船舶
+煤炭、石油、天然气
+钢铁、铝、铜、稀土、黄金
+化工、化纤、塑料、橡胶
+水泥、玻璃、陶瓷
+电力、燃气、水务
+旅游、酒店、餐饮、教育
+传媒、游戏、影视、广告
+服装、纺织、家纺
+家电、厨电、小家电
+工程机械、专用设备、通用设备
+
+只返回JSON，不要有其他内容。`,
+		},
+		{
+			Role:    "user",
+			Content: fmt.Sprintf("股票%s（代码%s）在同花顺中属于哪个行业板块？", name, code),
+		},
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return StockClassification{}
+	}
+
+	httpReq, err := http.NewRequest("POST", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return StockClassification{}
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+dashscopeAPIKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return StockClassification{}
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return StockClassification{}
+	}
+
+	var qwenResp QwenResponse
+	if err := json.Unmarshal(body, &qwenResp); err != nil {
+		return StockClassification{}
+	}
+
+	result := qwenResp.Output.Text
+	if result == "" && len(qwenResp.Output.Choices) > 0 {
+		result = qwenResp.Output.Choices[0].Message.Content
+	}
+
+	// 解析JSON结果
+	var classification StockClassification
+	if err := json.Unmarshal([]byte(result), &classification); err != nil {
+		// 如果解析失败，尝试提取JSON部分
+		if start := findJSONStart(result); start >= 0 {
+			if end := findJSONEnd(result, start); end > start {
+				json.Unmarshal([]byte(result[start:end+1]), &classification)
+			}
+		}
+	}
+
+	return classification
+}
+
+func findJSONStart(s string) int {
+	for i, c := range s {
+		if c == '{' {
+			return i
+		}
+	}
+	return -1
+}
+
+func findJSONEnd(s string, start int) int {
+	depth := 0
+	for i := start; i < len(s); i++ {
+		if s[i] == '{' {
+			depth++
+		} else if s[i] == '}' {
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
