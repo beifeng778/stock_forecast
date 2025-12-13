@@ -418,14 +418,41 @@ func SearchStocksWithRefresh(keyword string, forceRefresh bool) ([]Stock, bool) 
 	}
 
 	keyword = strings.ToUpper(keyword)
-	var result []Stock
+
+	// 分类匹配结果：精确匹配 > 前缀匹配 > 包含匹配
+	var exactMatch []Stock     // 代码或名称完全匹配
+	var nameExactMatch []Stock // 名称完全等于关键词
+	var prefixMatch []Stock    // 代码或名称前缀匹配
+	var containMatch []Stock   // 代码或名称包含匹配
+
 	for _, s := range allStocks {
-		if strings.Contains(s.Code, keyword) || strings.Contains(strings.ToUpper(s.Name), keyword) {
-			result = append(result, s)
-			if len(result) >= 100 {
-				break
-			}
+		upperName := strings.ToUpper(s.Name)
+
+		// 精确匹配（代码完全匹配）
+		if s.Code == keyword {
+			exactMatch = append(exactMatch, s)
+		} else if upperName == keyword {
+			// 名称完全匹配
+			nameExactMatch = append(nameExactMatch, s)
+		} else if strings.HasPrefix(s.Code, keyword) || strings.HasPrefix(upperName, keyword) {
+			// 前缀匹配
+			prefixMatch = append(prefixMatch, s)
+		} else if strings.Contains(s.Code, keyword) || strings.Contains(upperName, keyword) {
+			// 包含匹配
+			containMatch = append(containMatch, s)
 		}
+	}
+
+	// 合并结果，按优先级排序
+	var result []Stock
+	result = append(result, exactMatch...)
+	result = append(result, nameExactMatch...)
+	result = append(result, prefixMatch...)
+	result = append(result, containMatch...)
+
+	// 限制返回数量
+	if len(result) > 100 {
+		result = result[:100]
 	}
 
 	return result, fromCache

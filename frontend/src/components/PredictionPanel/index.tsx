@@ -1,34 +1,34 @@
-import React from 'react';
-import { Card, Tag, Progress, Collapse, Empty, Descriptions } from 'antd';
+import React from "react";
+import { Card, Tag, Progress, Collapse, Empty } from "antd";
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
   MinusOutlined,
-} from '@ant-design/icons';
-import ReactMarkdown from 'react-markdown';
-import { useStockStore } from '../../store';
-import type { PredictResult, Signal } from '../../types';
-import './index.css';
+} from "@ant-design/icons";
+import ReactMarkdown from "react-markdown";
+import { useStockStore } from "../../store";
+import type { PredictResult, Signal } from "../../types";
+import "./index.css";
 
 const { Panel } = Collapse;
 
 // 趋势图标
 const TrendIcon: React.FC<{ trend: string }> = ({ trend }) => {
-  if (trend === 'up') {
-    return <ArrowUpOutlined style={{ color: '#f5222d' }} />;
+  if (trend === "up") {
+    return <ArrowUpOutlined style={{ color: "#f5222d" }} />;
   }
-  if (trend === 'down') {
-    return <ArrowDownOutlined style={{ color: '#52c41a' }} />;
+  if (trend === "down") {
+    return <ArrowDownOutlined style={{ color: "#52c41a" }} />;
   }
-  return <MinusOutlined style={{ color: '#faad14' }} />;
+  return <MinusOutlined style={{ color: "#faad14" }} />;
 };
 
 // 信号标签
 const SignalTag: React.FC<{ signal: Signal }> = ({ signal }) => {
   const colorMap: Record<string, string> = {
-    bullish: 'red',
-    bearish: 'green',
-    neutral: 'default',
+    bullish: "red",
+    bearish: "green",
+    neutral: "default",
   };
   return (
     <Tag color={colorMap[signal.type]}>
@@ -40,7 +40,10 @@ const SignalTag: React.FC<{ signal: Signal }> = ({ signal }) => {
 // 单个预测结果卡片
 const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
   const priceChange = result.target_prices.short - result.current_price;
-  const priceChangePercent = ((priceChange / result.current_price) * 100).toFixed(2);
+  const priceChangePercent = (
+    (priceChange / result.current_price) *
+    100
+  ).toFixed(2);
 
   return (
     <Card className="prediction-card" size="small">
@@ -65,9 +68,12 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
           </div>
           <div className="price-item">
             <span className="label">目标价(5日)</span>
-            <span className={`value ${priceChange >= 0 ? 'up' : 'down'}`}>
+            <span className={`value ${priceChange >= 0 ? "up" : "down"}`}>
               {result.target_prices.short.toFixed(2)}
-              <small>({priceChange >= 0 ? '+' : ''}{priceChangePercent}%)</small>
+              <small>
+                ({priceChange >= 0 ? "+" : ""}
+                {priceChangePercent}%)
+              </small>
             </span>
           </div>
         </div>
@@ -75,11 +81,15 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
         <div className="level-section">
           <div className="level-item">
             <span className="label">支撑位</span>
-            <span className="value support">{result.support_level.toFixed(2)}</span>
+            <span className="value support">
+              {result.support_level.toFixed(2)}
+            </span>
           </div>
           <div className="level-item">
             <span className="label">压力位</span>
-            <span className="value resistance">{result.resistance_level.toFixed(2)}</span>
+            <span className="value resistance">
+              {result.resistance_level.toFixed(2)}
+            </span>
           </div>
         </div>
 
@@ -88,7 +98,13 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
           <Progress
             percent={Math.round(result.confidence * 100)}
             size="small"
-            status={result.confidence > 0.7 ? 'success' : result.confidence > 0.5 ? 'normal' : 'exception'}
+            status={
+              result.confidence > 0.7
+                ? "success"
+                : result.confidence > 0.5
+                ? "normal"
+                : "exception"
+            }
           />
         </div>
 
@@ -105,32 +121,71 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                 <ReactMarkdown>{result.analysis}</ReactMarkdown>
               </div>
 
-              <Descriptions size="small" column={2} bordered>
-                <Descriptions.Item label="LSTM预测">
-                  {result.ml_predictions.lstm.trend === 'up' ? '看涨' :
-                   result.ml_predictions.lstm.trend === 'down' ? '看跌' : '震荡'}
-                  ({(result.ml_predictions.lstm.confidence * 100).toFixed(0)}%)
-                </Descriptions.Item>
-                <Descriptions.Item label="Prophet预测">
-                  {result.ml_predictions.prophet.trend === 'up' ? '看涨' :
-                   result.ml_predictions.prophet.trend === 'down' ? '看跌' : '震荡'}
-                  ({(result.ml_predictions.prophet.confidence * 100).toFixed(0)}%)
-                </Descriptions.Item>
-                <Descriptions.Item label="XGBoost预测">
-                  {result.ml_predictions.xgboost.trend === 'up' ? '看涨' :
-                   result.ml_predictions.xgboost.trend === 'down' ? '看跌' : '震荡'}
-                  ({(result.ml_predictions.xgboost.confidence * 100).toFixed(0)}%)
-                </Descriptions.Item>
-                <Descriptions.Item label="RSI">
-                  {result.indicators.rsi.toFixed(2)}
-                </Descriptions.Item>
-              </Descriptions>
+              <div className="ml-predictions-table-wrapper">
+                <table className="ml-predictions-table">
+                  <tbody>
+                    <tr>
+                      <td className="label">LSTM预测</td>
+                      <td className="value">
+                        {result.ml_predictions.lstm.trend === "up"
+                          ? "看涨"
+                          : result.ml_predictions.lstm.trend === "down"
+                          ? "看跌"
+                          : "震荡"}
+                        (
+                        {(result.ml_predictions.lstm.confidence * 100).toFixed(
+                          0
+                        )}
+                        %)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="label">Prophet预测</td>
+                      <td className="value">
+                        {result.ml_predictions.prophet.trend === "up"
+                          ? "看涨"
+                          : result.ml_predictions.prophet.trend === "down"
+                          ? "看跌"
+                          : "震荡"}
+                        (
+                        {(
+                          result.ml_predictions.prophet.confidence * 100
+                        ).toFixed(0)}
+                        %)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="label">XGBoost预测</td>
+                      <td className="value">
+                        {result.ml_predictions.xgboost.trend === "up"
+                          ? "看涨"
+                          : result.ml_predictions.xgboost.trend === "down"
+                          ? "看跌"
+                          : "震荡"}
+                        (
+                        {(
+                          result.ml_predictions.xgboost.confidence * 100
+                        ).toFixed(0)}
+                        %)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="label">RSI</td>
+                      <td className="value">
+                        {result.indicators.rsi.toFixed(2)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
 
               <div className="target-prices">
                 <h4>目标价位</h4>
                 <div className="target-grid">
                   <div>短期(5日): {result.target_prices.short.toFixed(2)}</div>
-                  <div>中期(20日): {result.target_prices.medium.toFixed(2)}</div>
+                  <div>
+                    中期(20日): {result.target_prices.medium.toFixed(2)}
+                  </div>
                   <div>长期(60日): {result.target_prices.long.toFixed(2)}</div>
                 </div>
               </div>
@@ -154,7 +209,9 @@ const PredictionPanel: React.FC = () => {
       <div className="panel-content">
         {predictions.length === 0 ? (
           <Empty
-            description={loading ? '预测中...' : '选择股票后点击"开始预测"查看结果'}
+            description={
+              loading ? "预测中..." : '选择股票后点击"开始预测"查看结果'
+            }
           />
         ) : (
           <div className="predictions-grid">

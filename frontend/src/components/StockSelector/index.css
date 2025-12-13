@@ -89,14 +89,39 @@
   margin-bottom: 16px;
 }
 
+/* 搜索图标居中 */
+.selector-search .ant-select-arrow {
+  height: 100% !important;
+  top: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-top: 0 !important;
+}
+
+/* 搜索下拉框滚动穿透修复 */
+.stock-search-dropdown .ant-select-item-option-content {
+  display: flex;
+  align-items: center;
+}
+
+.stock-search-dropdown .rc-virtual-list-holder {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
 .selected-stocks {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   background: rgba(15, 23, 42, 0.5);
   border: 1px solid rgba(99, 102, 241, 0.15);
   border-radius: 12px;
   padding: 8px;
   min-height: 200px;
+  touch-action: pan-y;
 }
 
 .empty-tip {
@@ -205,7 +230,7 @@
     font-size: 13px;
   }
 
-  /* 移动端搜索框优化 - 固定定位避免键盘遮挡 */
+  /* 移动端搜索框优化 */
   .selector-search {
     position: relative;
   }
@@ -216,18 +241,33 @@
 
   .selector-search .ant-select-selector {
     height: 44px !important;
-    padding: 6px 12px !important;
+    padding: 0 12px !important;
     border-radius: 8px !important;
+    display: flex !important;
+    align-items: center !important;
+  }
+
+  .selector-search .ant-select-selection-search {
+    display: flex !important;
+    align-items: center !important;
+    height: 100% !important;
   }
 
   .selector-search .ant-select-selection-search-input {
-    height: 42px !important;
+    height: 100% !important;
     font-size: 16px !important; /* 防止iOS自动缩放 */
+    line-height: 44px !important;
   }
 
   .selector-search .ant-select-selection-placeholder {
-    line-height: 30px !important;
+    line-height: 44px !important;
     font-size: 14px;
+  }
+
+  .selector-search .ant-select-arrow {
+    height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
   }
 }
 

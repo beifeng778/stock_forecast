@@ -28,6 +28,27 @@ const StockSelector: React.FC = () => {
   const [initialLoading, setInitialLoading] = useState(true);
   const [cooldown, setCooldown] = useState(0); // 刷新冷却倒计时
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stockListRef = useRef<HTMLDivElement>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // 下拉框打开时锁定body滚动（最简单可靠的方案）
+  useEffect(() => {
+    if (dropdownOpen) {
+      document.body.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.width = "100%";
+      document.body.style.top = `-${window.scrollY}px`;
+    } else {
+      const scrollY = document.body.style.top;
+      document.body.style.overflow = "";
+      document.body.style.position = "";
+      document.body.style.width = "";
+      document.body.style.top = "";
+      if (scrollY) {
+        window.scrollTo(0, parseInt(scrollY || "0") * -1);
+      }
+    }
+  }, [dropdownOpen]);
 
   const {
     selectedStocks,
@@ -236,6 +257,8 @@ const StockSelector: React.FC = () => {
               style={{ width: "100%" }}
               suffixIcon={<SearchOutlined />}
               value={undefined}
+              popupClassName="stock-search-dropdown"
+              onDropdownVisibleChange={(open) => setDropdownOpen(open)}
             >
               {stocks.map((stock) => (
                 <Select.Option key={stock.code} value={stock.code}>
@@ -251,7 +274,7 @@ const StockSelector: React.FC = () => {
             </Select>
           </div>
 
-          <div className="selected-stocks">
+          <div className="selected-stocks" ref={stockListRef}>
             {selectedStocks.length === 0 ? (
               <div className="empty-tip">请搜索并选择股票</div>
             ) : (
