@@ -12,30 +12,6 @@ import "./index.css";
 
 const { Panel } = Collapse;
 
-// 标签颜色列表
-const TAG_COLORS = [
-  "magenta",
-  "red",
-  "volcano",
-  "orange",
-  "gold",
-  "lime",
-  "green",
-  "cyan",
-  "blue",
-  "geekblue",
-  "purple",
-];
-
-// 根据文本生成固定颜色索引
-const getColorIndex = (text: string): number => {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    hash = text.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return Math.abs(hash) % TAG_COLORS.length;
-};
-
 // 趋势图标
 const TrendIcon: React.FC<{ trend: string }> = ({ trend }) => {
   if (trend === "up") {
@@ -77,8 +53,14 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
           <span className="stock-name">{result.stock_name}</span>
           {result.sector && (
             <Tag
-              color={TAG_COLORS[getColorIndex(result.sector)]}
               className="sector-tag"
+              color={
+                result.trend === "up"
+                  ? "red"
+                  : result.trend === "down"
+                  ? "green"
+                  : "gold"
+              }
             >
               {result.sector}
             </Tag>
