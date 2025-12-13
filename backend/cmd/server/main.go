@@ -13,12 +13,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func init() {
-	// 手动加载 .env 文件
-	file, err := os.Open(".env")
+func loadEnvFile(filename string) bool {
+	file, err := os.Open(filename)
 	if err != nil {
-		log.Println("未找到 .env 文件，使用系统环境变量")
-		return
+		return false
 	}
 	defer file.Close()
 
@@ -32,6 +30,21 @@ func init() {
 		if len(parts) == 2 {
 			os.Setenv(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
 		}
+	}
+	return true
+}
+
+func init() {
+	// 先加载 .env 文件
+	if loadEnvFile(".env") {
+		log.Println("已加载 .env 文件")
+	} else {
+		log.Println("未找到 .env 文件，使用系统环境变量")
+	}
+
+	// 再加载 .env.local 文件（会覆盖 .env 中的配置）
+	if loadEnvFile(".env.local") {
+		log.Println("已加载 .env.local 文件（本地配置）")
 	}
 }
 

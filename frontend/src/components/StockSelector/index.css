@@ -39,17 +39,20 @@
 }
 
 .refresh-btn {
-  width: 32px;
+  min-width: 32px;
   height: 32px;
-  padding: 0;
+  padding: 0 8px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   border: 1px solid rgba(99, 102, 241, 0.4);
   border-radius: 6px;
   background: rgba(99, 102, 241, 0.1);
   color: #818cf8;
   transition: all 0.2s ease;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .refresh-btn:hover {
@@ -172,12 +175,22 @@
     padding: 14px;
   }
 
+  .selector-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
   .selector-header h3 {
     font-size: 14px;
   }
 
+  .stock-count {
+    font-size: 11px;
+  }
+
   .selected-stocks {
-    min-height: 150px;
+    min-height: 120px;
+    max-height: 200px;
   }
 
   .stock-item {
@@ -191,4 +204,30 @@
   .stock-name {
     font-size: 13px;
   }
+
+  /* 移动端搜索框优化 - 固定定位避免键盘遮挡 */
+  .selector-search {
+    position: relative;
+  }
+
+  .selector-search .ant-select {
+    font-size: 16px; /* 防止iOS自动缩放 */
+  }
+
+  .selector-search .ant-select-selector {
+    height: 44px !important;
+    padding: 6px 12px !important;
+    border-radius: 8px !important;
+  }
+
+  .selector-search .ant-select-selection-search-input {
+    height: 42px !important;
+    font-size: 16px !important; /* 防止iOS自动缩放 */
+  }
+
+  .selector-search .ant-select-selection-placeholder {
+    line-height: 30px !important;
+    font-size: 14px;
+  }
 }
+

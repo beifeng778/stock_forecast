@@ -1,5 +1,14 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { Select, Button, Tag, Space, message, Spin, Modal } from "antd";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import {
+  Select,
+  Button,
+  Tag,
+  Space,
+  message,
+  Spin,
+  Modal,
+  Tooltip,
+} from "antd";
 import {
   SearchOutlined,
   DeleteOutlined,
@@ -10,11 +19,15 @@ import { getStocks, predict } from "../../services/api";
 import type { Stock } from "../../types";
 import "./index.css";
 
+const REFRESH_COOLDOWN = 5 * 60; // 5分钟冷却时间（秒）
+
 const StockSelector: React.FC = () => {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [allStocks, setAllStocks] = useState<Stock[]>([]);
   const [searching, setSearching] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [cooldown, setCooldown] = useState(0); // 刷新冷却倒计时
+  const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const {
     selectedStocks,
@@ -29,20 +42,74 @@ const StockSelector: React.FC = () => {
     clearAllData,
   } = useStockStore();
 
-  // 首次加载股票列表
-  const loadStockList = useCallback(async () => {
-    setInitialLoading(true);
-    try {
-      const result = await getStocks("");
-      setAllStocks(result || []);
-    } catch (error) {
-      console.error("加载股票列表失败:", error);
-      message.error("加载股票列表失败");
-      setAllStocks([]);
-    } finally {
-      setInitialLoading(false);
+  // 开始冷却倒计时
+  const startCooldown = useCallback((seconds: number = REFRESH_COOLDOWN) => {
+    setCooldown(seconds);
+    // 保存冷却结束时间到localStorage
+    const endTime = Date.now() + seconds * 1000;
+    localStorage.setItem("stockRefreshCooldownEnd", String(endTime));
+
+    if (cooldownTimer.current) {
+      clearInterval(cooldownTimer.current);
     }
+    cooldownTimer.current = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          if (cooldownTimer.current) {
+            clearInterval(cooldownTimer.current);
+            cooldownTimer.current = null;
+          }
+          localStorage.removeItem("stockRefreshCooldownEnd");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
   }, []);
+
+  // 页面加载时恢复冷却状态
+  useEffect(() => {
+    const savedEndTime = localStorage.getItem("stockRefreshCooldownEnd");
+    if (savedEndTime) {
+      const remaining = Math.ceil((Number(savedEndTime) - Date.now()) / 1000);
+      if (remaining > 0) {
+        startCooldown(remaining);
+      } else {
+        localStorage.removeItem("stockRefreshCooldownEnd");
+      }
+    }
+  }, [startCooldown]);
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (cooldownTimer.current) {
+        clearInterval(cooldownTimer.current);
+      }
+    };
+  }, []);
+
+  // 加载股票列表（支持强制刷新）
+  const loadStockList = useCallback(
+    async (forceRefresh = false) => {
+      setInitialLoading(true);
+      try {
+        const result = await getStocks("", forceRefresh);
+        setAllStocks(result || []);
+        if (forceRefresh) {
+          message.success("股票列表已增量更新");
+          startCooldown(); // 刷新后开始冷却
+        }
+      } catch (error) {
+        console.error("加载股票列表失败:", error);
+        message.error("加载股票列表失败");
+        setAllStocks([]);
+      } finally {
+        setInitialLoading(false);
+      }
+    },
+    [startCooldown]
+  );
 
   // 组件挂载时加载股票列表
   useEffect(() => {
@@ -129,17 +196,24 @@ const StockSelector: React.FC = () => {
     <div className="stock-selector">
       <div className="selector-header">
         <h3>股票选择</h3>
-        <Space>
+        <Space size="middle">
           {!initialLoading && (
             <span className="stock-count">共 {allStocks.length} 只股票</span>
           )}
-          <Button
-            className="refresh-btn"
-            icon={<ReloadOutlined spin={initialLoading} />}
-            onClick={loadStockList}
-            disabled={initialLoading}
-            title="刷新股票列表"
-          />
+          <Tooltip title="增量刷新：数据来自不稳定的三方接口，可能不全">
+            <Button
+              className="refresh-btn"
+              icon={<ReloadOutlined spin={initialLoading} />}
+              onClick={() => loadStockList(true)}
+              disabled={initialLoading || loading || cooldown > 0}
+            >
+              {cooldown > 0
+                ? `${Math.floor(cooldown / 60)}:${String(
+                    cooldown % 60
+                  ).padStart(2, "0")}`
+                : null}
+            </Button>
+          </Tooltip>
         </Space>
       </div>
 
@@ -203,7 +277,7 @@ const StockSelector: React.FC = () => {
         <Space>
           <Button
             onClick={handleClearAll}
-            disabled={selectedStocks.length === 0}
+            disabled={selectedStocks.length === 0 || initialLoading}
           >
             清空
           </Button>
@@ -211,7 +285,11 @@ const StockSelector: React.FC = () => {
             type="primary"
             onClick={handlePredict}
             loading={loading}
-            disabled={selectedStocks.length === 0}
+            disabled={
+              selectedStocks.length === 0 ||
+              initialLoading ||
+              allStocks.length === 0
+            }
           >
             开始预测
           </Button>

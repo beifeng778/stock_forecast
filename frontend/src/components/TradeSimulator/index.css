@@ -262,13 +262,21 @@
     font-size: 11px;
   }
 
-  /* 移动端日期选择器优化 */
+  /* 移动端输入框优化 - 字体16px防止iOS自动缩放 */
+  .simulator-content .ant-input-number-input {
+    font-size: 16px !important;
+  }
+
+  .simulator-content .ant-select-selection-search-input {
+    font-size: 16px !important;
+  }
+
   .simulator-content .ant-picker {
     width: 100%;
   }
 
   .simulator-content .ant-picker-input > input {
-    font-size: 13px;
+    font-size: 16px !important;
   }
 
   /* 移动端按钮行对齐 */
@@ -281,25 +289,24 @@
   }
 }
 
-/* 全局日期选择器弹出层优化 */
-.ant-picker-dropdown {
-  position: fixed !important;
-  left: 50% !important;
-  top: 50% !important;
-  transform: translate(-50%, -50%) !important;
+/* 日期选择器样式优化 - 统一分隔线 */
+.ant-picker-panel {
+  border: none !important;
 }
 
-@media (max-width: 768px) {
-  .ant-picker-dropdown {
-    width: calc(100vw - 32px) !important;
-    max-width: 320px;
-  }
-
-  .ant-picker-dropdown .ant-picker-panel-container {
-    width: 100%;
-  }
-
-  .ant-picker-dropdown .ant-picker-date-panel {
-    width: 100%;
-  }
+.ant-picker-footer-extra {
+  border-top: 1px solid rgba(99, 102, 241, 0.3) !important;
 }
+
+.ant-picker-footer {
+  border-top: none !important;
+}
+
+.ant-picker-header {
+  border-bottom: 1px solid rgba(99, 102, 241, 0.3) !important;
+}
+
+.ant-picker-content thead th {
+  border-bottom: none !important;
+}
+

@@ -31,25 +31,70 @@ var HTTPClient = &http.Client{
 
 // GetStockList 获取A股股票列表
 func GetStockList() ([]Stock, error) {
-	stockListMutex.RLock()
-	if len(stockListCache) > 0 && time.Since(lastFetchTime) < cacheDuration {
-		defer stockListMutex.RUnlock()
-		return stockListCache, nil
-	}
-	stockListMutex.RUnlock()
+	return GetStockListWithRefresh(false)
+}
 
-	// 同时从东方财富和新浪获取，合并去重
-	stocks := fetchAndMergeStocks()
+// GetStockListWithRefresh 获取A股股票列表，支持强制刷新
+func GetStockListWithRefresh(forceRefresh bool) ([]Stock, error) {
+	stocks, _ := GetStockListWithRefresh2(forceRefresh)
 	if len(stocks) == 0 {
 		return nil, fmt.Errorf("获取股票列表失败")
 	}
+	return stocks, nil
+}
 
+// GetStockListWithRefresh2 获取A股股票列表，返回是否来自缓存
+func GetStockListWithRefresh2(forceRefresh bool) ([]Stock, bool) {
+	stockListMutex.RLock()
+	cacheValid := len(stockListCache) > 0 && time.Since(lastFetchTime) < cacheDuration
+	hasCache := len(stockListCache) > 0
+	stockListMutex.RUnlock()
+
+	// 如果不强制刷新且缓存有效，直接返回缓存
+	if !forceRefresh && cacheValid {
+		stockListMutex.RLock()
+		defer stockListMutex.RUnlock()
+		return stockListCache, true
+	}
+
+	// 同时从东方财富和新浪获取，合并去重
+	newStocks := fetchAndMergeStocks()
+
+	// 增量更新：将新获取的数据合并到现有缓存
 	stockListMutex.Lock()
-	stockListCache = stocks
-	lastFetchTime = time.Now()
+	if len(newStocks) > 0 {
+		if hasCache {
+			// 增量合并：用map去重
+			stockMap := make(map[string]Stock)
+			for _, s := range stockListCache {
+				stockMap[s.Code] = s
+			}
+			newCount := 0
+			for _, s := range newStocks {
+				if _, exists := stockMap[s.Code]; !exists {
+					newCount++
+				}
+				stockMap[s.Code] = s
+			}
+			// 转换回slice
+			merged := make([]Stock, 0, len(stockMap))
+			for _, s := range stockMap {
+				merged = append(merged, s)
+			}
+			stockListCache = merged
+			fmt.Printf("增量更新: 新增 %d 只股票, 总计 %d 只\n", newCount, len(merged))
+		} else {
+			stockListCache = newStocks
+		}
+		lastFetchTime = time.Now()
+	}
+	result := stockListCache
 	stockListMutex.Unlock()
 
-	return stocks, nil
+	if len(result) == 0 {
+		return nil, false
+	}
+	return result, false
 }
 
 // fetchAndMergeStocks 从多个数据源获取股票并合并去重
@@ -179,8 +224,11 @@ func fetchSinaStocks(market string, page int) ([]Stock, error) {
 	url := fmt.Sprintf("https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=%d&num=80&sort=symbol&asc=1&node=%s_a&symbol=&_s_r_a=auto", page, market)
 
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://finance.sina.com.cn")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Referer", "https://vip.stock.finance.sina.com.cn/")
+	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 
 	resp, err := HTTPClient.Do(req)
 	if err != nil {
@@ -199,7 +247,9 @@ func fetchSinaStocks(market string, page int) ([]Stock, error) {
 	}
 
 	if err := json.Unmarshal(body, &items); err != nil {
-		return nil, err
+		// 打印返回内容用于调试
+		fmt.Printf("新浪API返回内容(前200字符): %s\n", string(body[:min(200, len(body))]))
+		return nil, fmt.Errorf("%v: %s", err, string(body[:min(100, len(body))]))
 	}
 
 	var stocks []Stock
@@ -223,13 +273,50 @@ func fetchSinaStocks(market string, page int) ([]Stock, error) {
 
 	return stocks, nil
 }
-
-// fetchEMStocks 从东方财富API获取股票
 func fetchEMStocks(fs string) ([]Stock, error) {
-	url := fmt.Sprintf("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5000&fs=%s&fields=f12,f14", fs)
+	var allStocks []Stock
+	pageSize := 100 // 东方财富API每页最多返回100条
+
+	// 分页获取，每页100条，最多获取50页（5000只股票）
+	for page := 1; page <= 50; page++ {
+		var stocks []Stock
+		var err error
+
+		// 重试3次
+		for retry := 0; retry < 3; retry++ {
+			stocks, err = fetchEMStocksPage(fs, page, pageSize)
+			if err == nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond) // 重试前等待500ms
+		}
+
+		if err != nil {
+			fmt.Printf("东方财富第%d页获取失败: %v\n", page, err)
+			break
+		}
+		if len(stocks) == 0 {
+			break
+		}
+		allStocks = append(allStocks, stocks...)
+		if len(stocks) < pageSize {
+			break // 不足一页，说明已经获取完毕
+		}
+
+		// 每页请求间隔50ms，避免被限流
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	fmt.Printf("从东方财富获取到 %d 只股票\n", len(allStocks))
+	return allStocks, nil
+}
+
+// fetchEMStocksPage 从东方财富API获取单页股票
+func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
+	url := fmt.Sprintf("https://push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=%d&fs=%s&fields=f12,f14", page, pageSize, fs)
 
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Referer", "https://quote.eastmoney.com")
 
 	resp, err := HTTPClient.Do(req)
@@ -306,15 +393,28 @@ func min(a, b int) int {
 
 // SearchStocks 搜索股票
 func SearchStocks(keyword string) ([]Stock, error) {
-	allStocks, err := GetStockList()
-	if err != nil {
-		return nil, err
+	stocks, _ := SearchStocksWithRefresh(keyword, false)
+	return stocks, nil
+}
+
+// SearchStocksResult 搜索结果
+type SearchStocksResult struct {
+	Stocks    []Stock `json:"stocks"`
+	FromCache bool    `json:"fromCache"`
+	Total     int     `json:"total"`
+}
+
+// SearchStocksWithRefresh 搜索股票，支持强制刷新，返回是否来自缓存
+func SearchStocksWithRefresh(keyword string, forceRefresh bool) ([]Stock, bool) {
+	allStocks, fromCache := GetStockListWithRefresh2(forceRefresh)
+	if len(allStocks) == 0 {
+		return nil, false
 	}
 
 	fmt.Printf("股票总数: %d, 搜索关键词: %s\n", len(allStocks), keyword)
 
 	if keyword == "" {
-		return allStocks, nil
+		return allStocks, fromCache
 	}
 
 	keyword = strings.ToUpper(keyword)
@@ -328,7 +428,7 @@ func SearchStocks(keyword string) ([]Stock, error) {
 		}
 	}
 
-	return result, nil
+	return result, fromCache
 }
 
 // GetStockInfo 获取股票信息

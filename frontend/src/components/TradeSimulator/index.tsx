@@ -79,6 +79,8 @@ const TradeSimulator: React.FC = () => {
     setTradeHasFutureDate,
   } = useStockStore();
   const [loading, setLoading] = useState(false);
+  const [buyDateOpen, setBuyDateOpen] = useState(false);
+  const [sellDateOpen, setSellDateOpen] = useState(false);
 
   // 历史K线数据缓存
   const historyKlinesRef = useRef<Record<string, KlineData[]>>({});
@@ -119,11 +121,13 @@ const TradeSimulator: React.FC = () => {
     return !isWorkday(current);
   };
 
-  // 获取可选股票列表
-  const stockOptions = predictions.map((p) => ({
-    value: p.stock_code,
-    label: `${p.stock_code} ${p.stock_name}`,
-  }));
+  // 获取可选股票列表（过滤掉名称为"未知"的股票）
+  const stockOptions = predictions
+    .filter((p) => p.stock_name && p.stock_name !== "未知")
+    .map((p) => ({
+      value: p.stock_code,
+      label: `${p.stock_code} ${p.stock_name}`,
+    }));
 
   // 计算盈亏
   const handleCalculate = async (values: any) => {
@@ -438,8 +442,43 @@ const TradeSimulator: React.FC = () => {
                   style={{ width: "100%" }}
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
-                  onChange={handleBuyDateChange}
+                  onChange={(date) => {
+                    handleBuyDateChange(date);
+                    setBuyDateOpen(false);
+                  }}
                   inputReadOnly
+                  open={buyDateOpen}
+                  onOpenChange={setBuyDateOpen}
+                  showToday={false}
+                  renderExtraFooter={() => (
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "8px 12px",
+                      }}
+                    >
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          const today = dayjs();
+                          if (!disabledDate(today)) {
+                            handleBuyDateChange(today);
+                            form.setFieldValue("buy_date", today);
+                          }
+                          setBuyDateOpen(false);
+                        }}
+                      >
+                        今天
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => setBuyDateOpen(false)}
+                      >
+                        关闭
+                      </Button>
+                    </div>
+                  )}
                 />
               </Form.Item>
             </Col>
@@ -486,8 +525,43 @@ const TradeSimulator: React.FC = () => {
                   style={{ width: "100%" }}
                   disabledDate={disabledDate}
                   placeholder="选择工作日"
-                  onChange={handleSellDateChange}
+                  onChange={(date) => {
+                    handleSellDateChange(date);
+                    setSellDateOpen(false);
+                  }}
                   inputReadOnly
+                  open={sellDateOpen}
+                  onOpenChange={setSellDateOpen}
+                  showToday={false}
+                  renderExtraFooter={() => (
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "8px 12px",
+                      }}
+                    >
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          const today = dayjs();
+                          if (!disabledDate(today)) {
+                            handleSellDateChange(today);
+                            form.setFieldValue("sell_date", today);
+                          }
+                          setSellDateOpen(false);
+                        }}
+                      >
+                        今天
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => setSellDateOpen(false)}
+                      >
+                        关闭
+                      </Button>
+                    </div>
+                  )}
                 />
               </Form.Item>
             </Col>

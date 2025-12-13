@@ -3,24 +3,27 @@ package handler
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"stock-forecast-backend/internal/stockdata"
+
+	"github.com/gin-gonic/gin"
 )
 
 // GetStocks 获取股票列表
 func GetStocks(c *gin.Context) {
 	keyword := c.Query("keyword")
+	refresh := c.Query("refresh") == "1"
 
-	stocks, err := stockdata.SearchStocks(keyword)
-	if err != nil {
+	stocks, fromCache := stockdata.SearchStocksWithRefresh(keyword, refresh)
+	if stocks == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error": "获取股票列表失败",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data": stocks,
+		"data":      stocks,
+		"fromCache": fromCache,
 	})
 }
 

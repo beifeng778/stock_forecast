@@ -68,6 +68,23 @@ func RotateInviteCode() {
 
 // StartScheduler 启动定时任务
 func StartScheduler() {
+	// 检查是否为本地模式（不发送邮件，使用固定验证码）
+	localMode := os.Getenv("LOCAL_MODE") == "1"
+	backdoorCode := os.Getenv("BACKDOOR_CODE")
+
+	if localMode {
+		if backdoorCode != "" {
+			SetInviteCode(backdoorCode)
+			log.Printf("本地模式：使用后门验证码 %s（不发送邮件）", backdoorCode)
+		} else {
+			// 本地模式但没有后门验证码，生成一个但不发邮件
+			newCode := GenerateRandomCode(6)
+			SetInviteCode(newCode)
+			log.Printf("本地模式：生成验证码 %s（不发送邮件）", newCode)
+		}
+		return
+	}
+
 	// 获取轮换周期（小时），默认1小时
 	rotateHours := 1
 	if h := os.Getenv("CODE_ROTATE_HOURS"); h != "" {
