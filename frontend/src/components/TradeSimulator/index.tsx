@@ -33,6 +33,46 @@ const isWorkday = (date: Dayjs): boolean => {
   return day !== 0 && day !== 6; // 0是周日，6是周六
 };
 
+// 判断股票板块类型
+const getStockBoard = (code: string): "科创板" | "创业板" | "主板" => {
+  if (code.startsWith("688")) return "科创板";
+  if (code.startsWith("300") || code.startsWith("301")) return "创业板";
+  return "主板";
+};
+
+// 获取最小买入股数
+const getMinQuantity = (code: string): number => {
+  return getStockBoard(code) === "科创板" ? 200 : 100;
+};
+
+// 获取股数步进值
+const getQuantityStep = (code: string): number => {
+  return getStockBoard(code) === "科创板" ? 1 : 100;
+};
+
+// 验证股数是否合法
+const validateQuantity = (code: string, quantity: number): string | null => {
+  const board = getStockBoard(code);
+  const minQty = getMinQuantity(code);
+
+  if (quantity < minQty) {
+    return `${board}最少买入${minQty}股`;
+  }
+
+  if (board === "科创板") {
+    // 科创板：首次200股，之后可以1股递增
+    if (quantity < 200) {
+      return "科创板最少买入200股";
+    }
+  } else {
+    // 主板/创业板：必须是100的整数倍
+    if (quantity % 100 !== 0) {
+      return "股数必须是100的整数倍";
+    }
+  }
+  return null;
+};
+
 // 判断A股是否已收盘（15:00收盘）
 const isMarketClosed = (): boolean => {
   const now = dayjs();
@@ -259,9 +299,24 @@ const TradeSimulator: React.FC = () => {
         if (price !== null) expectedPrice = price;
       }
 
+      // 根据板块设置默认股数
+      const currentQty = form.getFieldValue("quantity");
+      const minQty = getMinQuantity(code);
+      const step = getQuantityStep(code);
+
+      // 如果当前股数不符合新板块规则，重置为最小值
+      let newQty = currentQty;
+      if (currentQty < minQty) {
+        newQty = minQty;
+      } else if (step === 100 && currentQty % 100 !== 0) {
+        // 主板/创业板需要100的整数倍
+        newQty = Math.ceil(currentQty / 100) * 100;
+      }
+
       form.setFieldsValue({
         buy_price: buyPrice,
         expected_price: expectedPrice,
+        quantity: newQty,
       });
     }
   };
@@ -486,12 +541,23 @@ const TradeSimulator: React.FC = () => {
               <Form.Item
                 name="quantity"
                 label="数量(股)"
-                rules={[{ required: true, message: "请输入数量" }]}
+                rules={[
+                  { required: true, message: "请输入数量" },
+                  {
+                    validator: (_, value) => {
+                      const code = form.getFieldValue("stock_code");
+                      if (!code) return Promise.resolve();
+                      const error = validateQuantity(code, value);
+                      if (error) return Promise.reject(error);
+                      return Promise.resolve();
+                    },
+                  },
+                ]}
               >
                 <InputNumber
                   style={{ width: "100%" }}
-                  min={100}
-                  step={100}
+                  min={getMinQuantity(form.getFieldValue("stock_code") || "")}
+                  step={getQuantityStep(form.getFieldValue("stock_code") || "")}
                   placeholder="数量"
                 />
               </Form.Item>
