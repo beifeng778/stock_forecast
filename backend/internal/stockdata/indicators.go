@@ -1,6 +1,7 @@
 package stockdata
 
 import (
+	"fmt"
 	"math"
 )
 
@@ -35,8 +36,8 @@ type Signal struct {
 
 // CalculateIndicators 计算技术指标
 func CalculateIndicators(data []KlineData) (*Indicators, error) {
-	if len(data) < 60 {
-		return nil, nil
+	if len(data) < 1 {
+		return nil, fmt.Errorf("K线数据为空")
 	}
 
 	closes := make([]float64, len(data))
@@ -53,27 +54,30 @@ func CalculateIndicators(data []KlineData) (*Indicators, error) {
 	// 当前价格
 	ind.CurrentPrice = closes[len(closes)-1]
 
-	// 均线
-	ind.MA5 = calculateMA(closes, 5)
-	ind.MA10 = calculateMA(closes, 10)
-	ind.MA20 = calculateMA(closes, 20)
-	ind.MA60 = calculateMA(closes, 60)
+	n := len(closes)
+
+	// 均线（根据数据量动态调整）
+	ind.MA5 = calculateMA(closes, min(5, n))
+	ind.MA10 = calculateMA(closes, min(10, n))
+	ind.MA20 = calculateMA(closes, min(20, n))
+	ind.MA60 = calculateMA(closes, min(60, n))
 
 	// MACD
 	ind.MACD, ind.Signal, ind.Hist = calculateMACD(closes)
 
 	// RSI
-	ind.RSI = calculateRSI(closes, 14)
+	ind.RSI = calculateRSI(closes, min(14, n))
 
 	// KDJ
 	ind.KDJK, ind.KDJD, ind.KDJJ = calculateKDJ(highs, lows, closes)
 
 	// 布林带
-	ind.BollUpper, ind.BollMiddle, ind.BollLower = calculateBollinger(closes, 20)
+	ind.BollUpper, ind.BollMiddle, ind.BollLower = calculateBollinger(closes, min(20, n))
 
 	// 支撑位和压力位
-	ind.SupportLevel = minSlice(lows[len(lows)-20:])
-	ind.ResistanceLevel = maxSlice(highs[len(highs)-20:])
+	lookback := min(20, n)
+	ind.SupportLevel = minSlice(lows[n-lookback:])
+	ind.ResistanceLevel = maxSlice(highs[n-lookback:])
 
 	// 生成信号
 	ind.Signals = generateSignals(ind)

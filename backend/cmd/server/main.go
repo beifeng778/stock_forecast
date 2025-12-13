@@ -64,6 +64,7 @@ func main() {
 	{
 		// 认证相关（不需要token）
 		api.POST("/auth/verify", handler.VerifyInviteCode)
+		api.GET("/auth/check", handler.CheckToken)
 
 		// 需要认证的路由
 		protected := api.Group("")

@@ -152,9 +152,9 @@ func fetchStockListFromEM() ([]Stock, error) {
 				shCount++
 			}
 		}
-		fmt.Printf("东方财富沪市: 获取 %d 只, 过滤后 %d 只\n", len(shStocks), shCount)
+		fmt.Printf("东方财富沪市主板: 获取 %d 只, 过滤后 %d 只\n", len(shStocks), shCount)
 	} else {
-		fmt.Printf("获取沪市股票失败: %v\n", err)
+		fmt.Printf("获取沪市主板股票失败: %v\n", err)
 	}
 
 	// 获取深市主板 (00开头)
@@ -168,9 +168,41 @@ func fetchStockListFromEM() ([]Stock, error) {
 				szCount++
 			}
 		}
-		fmt.Printf("东方财富深市: 获取 %d 只, 过滤后 %d 只\n", len(szStocks), szCount)
+		fmt.Printf("东方财富深市主板: 获取 %d 只, 过滤后 %d 只\n", len(szStocks), szCount)
 	} else {
-		fmt.Printf("获取深市股票失败: %v\n", err)
+		fmt.Printf("获取深市主板股票失败: %v\n", err)
+	}
+
+	// 获取创业板 (300开头)
+	cyStocks, err := fetchEMStocks("m:0+t:80")
+	if err == nil {
+		cyCount := 0
+		for _, s := range cyStocks {
+			if strings.HasPrefix(s.Code, "300") || strings.HasPrefix(s.Code, "301") {
+				s.Market = "SZ"
+				allStocks = append(allStocks, s)
+				cyCount++
+			}
+		}
+		fmt.Printf("东方财富创业板: 获取 %d 只, 过滤后 %d 只\n", len(cyStocks), cyCount)
+	} else {
+		fmt.Printf("获取创业板股票失败: %v\n", err)
+	}
+
+	// 获取科创板 (688开头)
+	kcStocks, err := fetchEMStocks("m:1+t:23")
+	if err == nil {
+		kcCount := 0
+		for _, s := range kcStocks {
+			if strings.HasPrefix(s.Code, "688") {
+				s.Market = "SH"
+				allStocks = append(allStocks, s)
+				kcCount++
+			}
+		}
+		fmt.Printf("东方财富科创板: 获取 %d 只, 过滤后 %d 只\n", len(kcStocks), kcCount)
+	} else {
+		fmt.Printf("获取科创板股票失败: %v\n", err)
 	}
 
 	fmt.Printf("东方财富总计: %d 只股票\n", len(allStocks))
@@ -257,8 +289,8 @@ func fetchSinaStocks(market string, page int) ([]Stock, error) {
 		code := strings.TrimPrefix(item.Symbol, "sh")
 		code = strings.TrimPrefix(code, "sz")
 
-		// 只保留 6 和 0 开头的
-		if strings.HasPrefix(code, "6") || strings.HasPrefix(code, "0") {
+		// 保留主板(6/0开头)、创业板(300/301开头)、科创板(688开头)
+		if strings.HasPrefix(code, "6") || strings.HasPrefix(code, "0") || strings.HasPrefix(code, "3") {
 			mkt := "SZ"
 			if strings.HasPrefix(code, "6") {
 				mkt = "SH"

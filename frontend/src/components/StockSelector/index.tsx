@@ -15,7 +15,7 @@ import {
   ReloadOutlined,
 } from "@ant-design/icons";
 import { useStockStore } from "../../store";
-import { getStocks, predict } from "../../services/api";
+import { getStocks, predict, validateBeforeAction } from "../../services/api";
 import type { Stock } from "../../types";
 import "./index.css";
 
@@ -29,25 +29,30 @@ const StockSelector: React.FC = () => {
   const [cooldown, setCooldown] = useState(0); // 刷新冷却倒计时
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const stockListRef = useRef<HTMLDivElement>(null);
+  const isComposing = useRef(false); // 输入法组合状态
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchValue, setSearchValue] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
-  // 下拉框打开时锁定body滚动（最简单可靠的方案）
+  // 下拉框打开时阻止页面滚动
   useEffect(() => {
-    if (dropdownOpen) {
-      document.body.style.overflow = "hidden";
-      document.body.style.position = "fixed";
-      document.body.style.width = "100%";
-      document.body.style.top = `-${window.scrollY}px`;
-    } else {
-      const scrollY = document.body.style.top;
-      document.body.style.overflow = "";
-      document.body.style.position = "";
-      document.body.style.width = "";
-      document.body.style.top = "";
-      if (scrollY) {
-        window.scrollTo(0, parseInt(scrollY || "0") * -1);
+    if (!dropdownOpen) return;
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const dropdown = document.querySelector(".stock-search-dropdown");
+      if (!dropdown) return;
+
+      // 如果触摸点不在下拉框内，阻止滚动
+      if (!dropdown.contains(e.target as Node)) {
+        e.preventDefault();
       }
-    }
+    };
+
+    document.addEventListener("touchmove", handleTouchMove, { passive: false });
+
+    return () => {
+      document.removeEventListener("touchmove", handleTouchMove);
+    };
   }, [dropdownOpen]);
 
   const {
@@ -137,8 +142,8 @@ const StockSelector: React.FC = () => {
     loadStockList();
   }, [loadStockList]);
 
-  // 搜索股票
-  const handleSearch = useCallback(async (keyword: string) => {
+  // 实际执行搜索
+  const doSearch = useCallback(async (keyword: string) => {
     if (!keyword || keyword.length < 1) {
       setStocks([]);
       return;
@@ -156,12 +161,36 @@ const StockSelector: React.FC = () => {
     }
   }, []);
 
+  // 搜索股票（带防抖，处理输入法组合状态）
+  const handleSearch = useCallback(
+    (keyword: string) => {
+      // 清除之前的定时器
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current);
+      }
+
+      // 如果正在输入法组合中，不触发搜索
+      if (isComposing.current) {
+        return;
+      }
+
+      // 防抖300ms
+      searchTimer.current = setTimeout(() => {
+        doSearch(keyword);
+      }, 300);
+    },
+    [doSearch]
+  );
+
   // 选择股票
   const handleSelect = (value: string) => {
     const stock = stocks.find((s) => s.code === value);
     if (stock) {
       addStock(stock);
     }
+    // 选择后清空搜索结果和搜索框
+    setStocks([]);
+    setSearchValue("");
   };
 
   // 开始预测
@@ -197,8 +226,12 @@ const StockSelector: React.FC = () => {
     clearTradeData();
   };
 
-  // 清空所有股票（二次确认）
-  const handleClearAll = () => {
+  // 清空所有股票（二次确认，需要验证token）
+  const handleClearAll = async () => {
+    // 清空操作没有调用后端接口，需要先验证token
+    const valid = await validateBeforeAction();
+    if (!valid) return;
+
     Modal.confirm({
       title: "确认清空",
       content:
@@ -245,20 +278,55 @@ const StockSelector: React.FC = () => {
         </div>
       ) : (
         <>
-          <div className="selector-search">
+          <div
+            className="selector-search"
+            onCompositionStart={() => {
+              isComposing.current = true;
+            }}
+            onCompositionEnd={(e) => {
+              isComposing.current = false;
+              // 组合结束后立即触发搜索
+              const target = e.target as HTMLInputElement;
+              if (target.value) {
+                doSearch(target.value);
+              }
+            }}
+          >
             <Select
               showSearch
               placeholder="输入股票代码或名称搜索"
               filterOption={false}
-              onSearch={handleSearch}
-              onSelect={handleSelect}
+              onSearch={(val) => {
+                setSearchValue(val);
+                handleSearch(val);
+                // 有输入时打开下拉框
+                if (val) {
+                  setDropdownOpen(true);
+                }
+              }}
+              onSelect={(val) => {
+                if (val) {
+                  handleSelect(val as string);
+                }
+                // 选择后关闭下拉框
+                setDropdownOpen(false);
+              }}
               loading={searching}
               notFoundContent={searching ? "搜索中..." : "未找到股票"}
               style={{ width: "100%" }}
               suffixIcon={<SearchOutlined />}
               value={undefined}
+              searchValue={searchValue}
               popupClassName="stock-search-dropdown"
-              onDropdownVisibleChange={(open) => setDropdownOpen(open)}
+              autoClearSearchValue={false}
+              open={dropdownOpen}
+              onDropdownVisibleChange={(open) => {
+                // 只有在有搜索结果时才允许打开
+                if (open && stocks.length === 0 && !searchValue) {
+                  return;
+                }
+                setDropdownOpen(open);
+              }}
             >
               {stocks.map((stock) => (
                 <Select.Option key={stock.code} value={stock.code}>
@@ -300,7 +368,7 @@ const StockSelector: React.FC = () => {
         <Space>
           <Button
             onClick={handleClearAll}
-            disabled={selectedStocks.length === 0 || initialLoading}
+            disabled={selectedStocks.length === 0 || initialLoading || loading}
           >
             清空
           </Button>

@@ -9,44 +9,44 @@ import (
 	"stock-forecast-backend/internal/stockdata"
 )
 
-// PredictStocks 批量预测股票
+// PredictStocks 批量预测股票（保持原始顺序）
 func PredictStocks(codes []string, period string) ([]model.PredictResult, error) {
-	results := make([]model.PredictResult, 0, len(codes))
-	var mu sync.Mutex
+	results := make([]*model.PredictResult, len(codes))
+	errors := make([]error, len(codes))
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(codes))
 
-	for _, code := range codes {
+	for i, code := range codes {
 		wg.Add(1)
-		go func(stockCode string) {
+		go func(idx int, stockCode string) {
 			defer wg.Done()
 
 			result, err := predictSingleStock(stockCode, period)
 			if err != nil {
-				errChan <- fmt.Errorf("预测 %s 失败: %v", stockCode, err)
+				errors[idx] = fmt.Errorf("预测 %s 失败: %v", stockCode, err)
 				return
 			}
-
-			mu.Lock()
-			results = append(results, *result)
-			mu.Unlock()
-		}(code)
+			results[idx] = result
+		}(i, code)
 	}
 
 	wg.Wait()
-	close(errChan)
 
-	// 收集错误
-	var errs []error
-	for err := range errChan {
-		errs = append(errs, err)
+	// 按顺序收集成功的结果
+	var finalResults []model.PredictResult
+	var firstErr error
+	for i := range codes {
+		if results[i] != nil {
+			finalResults = append(finalResults, *results[i])
+		} else if errors[i] != nil && firstErr == nil {
+			firstErr = errors[i]
+		}
 	}
 
-	if len(errs) > 0 && len(results) == 0 {
-		return nil, errs[0]
+	if len(finalResults) == 0 && firstErr != nil {
+		return nil, firstErr
 	}
 
-	return results, nil
+	return finalResults, nil
 }
 
 // predictSingleStock 预测单只股票
@@ -61,6 +61,9 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	indicators, err := stockdata.GetIndicators(code)
 	if err != nil {
 		return nil, fmt.Errorf("获取技术指标失败: %v", err)
+	}
+	if indicators == nil {
+		return nil, fmt.Errorf("获取技术指标失败: 返回数据为空")
 	}
 
 	// 3. 转换技术指标
@@ -92,12 +95,12 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	targetPrices := calculateTargetPrices(indicators.CurrentPrice, trend, confidence)
 
 	return &model.PredictResult{
-		StockCode:       code,
-		StockName:       stockName,
-		CurrentPrice:    indicators.CurrentPrice,
-		Trend:           trend,
-		TrendCN:         trendCN,
-		Confidence:      confidence,
+		StockCode:    code,
+		StockName:    stockName,
+		CurrentPrice: indicators.CurrentPrice,
+		Trend:        trend,
+		TrendCN:      trendCN,
+		Confidence:   confidence,
 		PriceRange: model.PriceRange{
 			Low:  indicators.SupportLevel,
 			High: indicators.ResistanceLevel,

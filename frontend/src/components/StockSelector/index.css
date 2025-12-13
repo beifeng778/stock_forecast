@@ -99,16 +99,10 @@
   margin-top: 0 !important;
 }
 
-/* 搜索下拉框滚动穿透修复 */
+/* 搜索下拉框样式 */
 .stock-search-dropdown .ant-select-item-option-content {
   display: flex;
   align-items: center;
-}
-
-.stock-search-dropdown .rc-virtual-list-holder {
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
 }
 
 .selected-stocks {

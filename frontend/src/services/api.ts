@@ -84,4 +84,30 @@ export async function verifyInviteCode(
   return response.data;
 }
 
+// 检查token是否有效
+export async function checkToken(): Promise<{
+  valid: boolean;
+  message: string;
+}> {
+  const response = await api.get("/auth/check");
+  return response.data;
+}
+
+// 操作前验证token（用于没有接口的按钮）
+export async function validateBeforeAction(): Promise<boolean> {
+  try {
+    const result = await checkToken();
+    if (!result.valid) {
+      // token无效，清除本地存储并刷新页面
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("invite_verified");
+      window.location.reload();
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default api;

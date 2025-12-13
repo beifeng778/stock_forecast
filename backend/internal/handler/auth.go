@@ -118,6 +118,34 @@ func VerifyInviteCode(c *gin.Context) {
 	}
 }
 
+// CheckToken 验证token是否有效
+func CheckToken(c *gin.Context) {
+	// 从 Header 获取 token
+	token := c.GetHeader("Authorization")
+	if token == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"valid":   false,
+			"message": "未提供token",
+		})
+		return
+	}
+
+	// 去掉 Bearer 前缀
+	token = strings.TrimPrefix(token, "Bearer ")
+
+	if ValidateToken(token) {
+		c.JSON(http.StatusOK, gin.H{
+			"valid":   true,
+			"message": "token有效",
+		})
+	} else {
+		c.JSON(http.StatusOK, gin.H{
+			"valid":   false,
+			"message": "token无效或已过期",
+		})
+	}
+}
+
 // AuthMiddleware 认证中间件
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
