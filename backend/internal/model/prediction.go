@@ -10,18 +10,19 @@ type PredictRequest struct {
 type PredictResult struct {
 	StockCode       string              `json:"stock_code"`
 	StockName       string              `json:"stock_name"`
+	Industry        string              `json:"industry"`
 	CurrentPrice    float64             `json:"current_price"`
-	Trend           string              `json:"trend"`           // up, down, sideways
-	TrendCN         string              `json:"trend_cn"`        // 看涨, 看跌, 震荡
-	Confidence      float64             `json:"confidence"`      // 0-100
-	PriceRange      PriceRange          `json:"price_range"`     // 预测价格区间
-	TargetPrices    TargetPrices        `json:"target_prices"`   // 目标价位
-	SupportLevel    float64             `json:"support_level"`   // 支撑位
-	ResistanceLevel float64             `json:"resistance_level"`// 压力位
-	Indicators      TechnicalIndicators `json:"indicators"`      // 技术指标
-	Signals         []Signal            `json:"signals"`         // 技术信号
-	Analysis        string              `json:"analysis"`        // AI分析
-	MLPredictions   MLPredictions       `json:"ml_predictions"`  // ML模型预测
+	Trend           string              `json:"trend"`            // up, down, sideways
+	TrendCN         string              `json:"trend_cn"`         // 看涨, 看跌, 震荡
+	Confidence      float64             `json:"confidence"`       // 0-100
+	PriceRange      PriceRange          `json:"price_range"`      // 预测价格区间
+	TargetPrices    TargetPrices        `json:"target_prices"`    // 目标价位
+	SupportLevel    float64             `json:"support_level"`    // 支撑位
+	ResistanceLevel float64             `json:"resistance_level"` // 压力位
+	Indicators      TechnicalIndicators `json:"indicators"`       // 技术指标
+	Signals         []Signal            `json:"signals"`          // 技术信号
+	Analysis        string              `json:"analysis"`         // AI分析
+	MLPredictions   MLPredictions       `json:"ml_predictions"`   // ML模型预测
 }
 
 // PriceRange 价格区间
@@ -39,10 +40,10 @@ type TargetPrices struct {
 
 // Signal 技术信号
 type Signal struct {
-	Name   string `json:"name"`   // 指标名称
-	Type   string `json:"type"`   // bullish, bearish, neutral
-	TypeCN string `json:"type_cn"`// 看涨, 看跌, 中性
-	Desc   string `json:"desc"`   // 描述
+	Name   string `json:"name"`    // 指标名称
+	Type   string `json:"type"`    // bullish, bearish, neutral
+	TypeCN string `json:"type_cn"` // 看涨, 看跌, 中性
+	Desc   string `json:"desc"`    // 描述
 }
 
 // MLPredictions ML模型预测结果

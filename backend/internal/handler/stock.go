@@ -13,10 +13,20 @@ func GetStocks(c *gin.Context) {
 	keyword := c.Query("keyword")
 	refresh := c.Query("refresh") == "1"
 
-	stocks, fromCache := stockdata.SearchStocksWithRefresh(keyword, refresh)
-	if stocks == nil {
+	stocks, fromCache, refreshFailed := stockdata.SearchStocksWithRefresh(keyword, refresh)
+
+	// 刷新时第三方接口获取失败，返回错误让用户感知
+	if refreshFailed {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取股票列表失败",
+			"error": "第三方数据接口异常，请稍后再试",
+		})
+		return
+	}
+
+	// 获取全量列表时，空结果算错误
+	if keyword == "" && (stocks == nil || len(stocks) == 0) {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "第三方数据接口异常，请稍后再试",
 		})
 		return
 	}

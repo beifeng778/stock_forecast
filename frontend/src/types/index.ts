@@ -2,7 +2,8 @@
 export interface Stock {
   code: string;
   name: string;
-  market: 'SH' | 'SZ';
+  market: "SH" | "SZ";
+  industry?: string;
 }
 
 // K线数据
@@ -45,7 +46,7 @@ export interface TechnicalIndicators {
 // 技术信号
 export interface Signal {
   name: string;
-  type: 'bullish' | 'bearish' | 'neutral';
+  type: "bullish" | "bearish" | "neutral";
   type_cn: string;
   desc: string;
 }
@@ -81,6 +82,7 @@ export interface TargetPrices {
 export interface PredictResult {
   stock_code: string;
   stock_name: string;
+  industry?: string;
   current_price: number;
   trend: string;
   trend_cn: string;
@@ -120,12 +122,12 @@ export interface TradeSimulateRequest {
   stock_code: string;
   buy_price: number;
   buy_date: string;
-  expected_price: number;   // 预期卖出价格
-  predicted_high: number;   // 预测当日最高价
-  predicted_close: number;  // 预测当日收盘价
-  predicted_low: number;    // 预测当日最低价
-  confidence: number;       // 预测置信度 (0-1)
-  trend: string;            // 预测趋势 (up/down/sideways)
+  expected_price: number; // 预期卖出价格
+  predicted_high: number; // 预测当日最高价
+  predicted_close: number; // 预测当日收盘价
+  predicted_low: number; // 预测当日最低价
+  confidence: number; // 预测置信度 (0-1)
+  trend: string; // 预测趋势 (up/down/sideways)
   sell_date: string;
   quantity: number;
 }
@@ -136,7 +138,7 @@ export interface ScenarioResult {
   sell_income: number;
   profit: number;
   profit_rate: string;
-  probability: string;  // 出现概率
+  probability: string; // 出现概率
   fees: TradeFees;
 }
 
@@ -149,11 +151,11 @@ export interface TradeSimulateResponse {
   quantity: number;
   buy_cost: number;
   buy_fees: TradeFees;
-  expected: ScenarioResult;     // 符合预期
+  expected: ScenarioResult; // 符合预期
   conservative: ScenarioResult; // 保守（AI分析）
-  moderate: ScenarioResult;     // 中等（AI分析）
-  aggressive: ScenarioResult;   // 激进（AI分析）
+  moderate: ScenarioResult; // 中等（AI分析）
+  aggressive: ScenarioResult; // 激进（AI分析）
 }
 
 // 周期类型
-export type PeriodType = 'daily' | 'weekly' | 'monthly';
+export type PeriodType = "daily" | "weekly" | "monthly";

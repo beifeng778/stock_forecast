@@ -78,6 +78,14 @@
   font-size: 14px;
 }
 
+.stock-info .industry-tag {
+  margin-left: 8px;
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 18px;
+  border-radius: 4px;
+}
+
 .trend-info {
   display: flex;
   align-items: center;

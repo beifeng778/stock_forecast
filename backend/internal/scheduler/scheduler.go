@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"stock-forecast-backend/internal/mail"
+	"stock-forecast-backend/internal/stockdata"
 )
 
 var (
@@ -122,4 +123,33 @@ func TestSendMail() error {
 		return fmt.Errorf("未配置 NOTIFY_EMAIL")
 	}
 	return mail.SendMail(to, "【股票预测系统】邮件测试", "<h1>邮件发送测试成功！</h1>")
+}
+
+// StartStockCacheRefreshScheduler 启动股票缓存刷新定时任务（每天凌晨4点）
+func StartStockCacheRefreshScheduler() {
+	go func() {
+		for {
+			now := time.Now()
+			// 计算下一个凌晨4点的时间
+			next4AM := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, now.Location())
+			if now.After(next4AM) {
+				// 如果当前时间已过今天4点，则设置为明天4点
+				next4AM = next4AM.Add(24 * time.Hour)
+			}
+
+			duration := next4AM.Sub(now)
+			log.Printf("股票缓存将在 %s 刷新（%v 后）", next4AM.Format("2006-01-02 15:04:05"), duration.Round(time.Minute))
+
+			// 等待到凌晨4点
+			time.Sleep(duration)
+
+			// 执行全量刷新
+			log.Println("开始刷新股票缓存...")
+			if _, err := stockdata.RefreshStockCache(); err != nil {
+				log.Printf("刷新股票缓存失败: %v", err)
+			} else {
+				log.Println("股票缓存刷新完成")
+			}
+		}
+	}()
 }

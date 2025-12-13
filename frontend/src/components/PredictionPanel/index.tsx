@@ -51,6 +51,11 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
         <div className="stock-info">
           <span className="stock-code">{result.stock_code}</span>
           <span className="stock-name">{result.stock_name}</span>
+          {result.industry && (
+            <Tag color="purple" className="industry-tag">
+              {result.industry}
+            </Tag>
+          )}
         </div>
         <div className="trend-info">
           <TrendIcon trend={result.trend} />

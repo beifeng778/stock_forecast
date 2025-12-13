@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  redis:
+    container_name: stock-forecast-redis
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: always
+    networks:
+      - stock-network
+
+networks:
+  stock-network:
+    name: stock-forecast-network
+    driver: bridge
+
+volumes:
+  redis_data:

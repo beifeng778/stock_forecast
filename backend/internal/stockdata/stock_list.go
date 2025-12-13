@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"stock-forecast-backend/internal/cache"
 	"strings"
 	"sync"
 	"time"
@@ -12,16 +13,21 @@ import (
 
 // Stock 股票信息
 type Stock struct {
-	Code   string `json:"code"`
-	Name   string `json:"name"`
-	Market string `json:"market"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	Market   string `json:"market"`
+	Industry string `json:"industry"`
 }
+
+const (
+	stockListCacheKey = "stock:list"
+	cacheDuration     = 24 * time.Hour
+)
 
 var (
 	stockListCache []Stock
 	stockListMutex sync.RWMutex
 	lastFetchTime  time.Time
-	cacheDuration  = 24 * time.Hour
 )
 
 // HTTPClient HTTP客户端
@@ -32,6 +38,24 @@ var HTTPClient = &http.Client{
 // GetStockList 获取A股股票列表
 func GetStockList() ([]Stock, error) {
 	return GetStockListWithRefresh(false)
+}
+
+// RefreshStockCache 刷新股票缓存（全量替换）
+func RefreshStockCache() ([]Stock, error) {
+	// 从数据源获取新数据
+	newStocks := fetchAndMergeStocks()
+
+	if len(newStocks) == 0 {
+		return nil, fmt.Errorf("获取股票列表失败")
+	}
+
+	// 全量替换到Redis
+	if err := cache.Set(stockListCacheKey, newStocks, cacheDuration); err != nil {
+		return nil, fmt.Errorf("保存到Redis失败: %v", err)
+	}
+
+	fmt.Printf("股票缓存全量刷新完成: %d 只股票\n", len(newStocks))
+	return newStocks, nil
 }
 
 // GetStockListWithRefresh 获取A股股票列表，支持强制刷新
@@ -45,56 +69,62 @@ func GetStockListWithRefresh(forceRefresh bool) ([]Stock, error) {
 
 // GetStockListWithRefresh2 获取A股股票列表，返回是否来自缓存
 func GetStockListWithRefresh2(forceRefresh bool) ([]Stock, bool) {
-	stockListMutex.RLock()
-	cacheValid := len(stockListCache) > 0 && time.Since(lastFetchTime) < cacheDuration
-	hasCache := len(stockListCache) > 0
-	stockListMutex.RUnlock()
-
-	// 如果不强制刷新且缓存有效，直接返回缓存
-	if !forceRefresh && cacheValid {
-		stockListMutex.RLock()
-		defer stockListMutex.RUnlock()
-		return stockListCache, true
+	// 1. 尝试从Redis获取缓存
+	if !forceRefresh {
+		var cachedStocks []Stock
+		if err := cache.Get(stockListCacheKey, &cachedStocks); err == nil && len(cachedStocks) > 0 {
+			fmt.Printf("从Redis缓存获取 %d 只股票\n", len(cachedStocks))
+			return cachedStocks, true
+		}
 	}
 
-	// 同时从东方财富和新浪获取，合并去重
+	// 2. 获取现有缓存用于增量更新
+	var existingStocks []Stock
+	if forceRefresh {
+		cache.Get(stockListCacheKey, &existingStocks)
+	}
+
+	// 3. 从数据源获取新数据
 	newStocks := fetchAndMergeStocks()
 
-	// 增量更新：将新获取的数据合并到现有缓存
-	stockListMutex.Lock()
-	if len(newStocks) > 0 {
-		if hasCache {
-			// 增量合并：用map去重
-			stockMap := make(map[string]Stock)
-			for _, s := range stockListCache {
-				stockMap[s.Code] = s
-			}
-			newCount := 0
-			for _, s := range newStocks {
-				if _, exists := stockMap[s.Code]; !exists {
-					newCount++
-				}
-				stockMap[s.Code] = s
-			}
-			// 转换回slice
-			merged := make([]Stock, 0, len(stockMap))
-			for _, s := range stockMap {
-				merged = append(merged, s)
-			}
-			stockListCache = merged
-			fmt.Printf("增量更新: 新增 %d 只股票, 总计 %d 只\n", newCount, len(merged))
-		} else {
-			stockListCache = newStocks
+	if len(newStocks) == 0 {
+		// 获取失败，返回缓存数据（如果有）
+		if len(existingStocks) > 0 {
+			return existingStocks, true
 		}
-		lastFetchTime = time.Now()
-	}
-	result := stockListCache
-	stockListMutex.Unlock()
-
-	if len(result) == 0 {
 		return nil, false
 	}
-	return result, false
+
+	// 4. 增量合并
+	var finalStocks []Stock
+	if len(existingStocks) > 0 {
+		stockMap := make(map[string]Stock)
+		for _, s := range existingStocks {
+			stockMap[s.Code] = s
+		}
+		newCount := 0
+		for _, s := range newStocks {
+			if _, exists := stockMap[s.Code]; !exists {
+				newCount++
+			}
+			stockMap[s.Code] = s
+		}
+		finalStocks = make([]Stock, 0, len(stockMap))
+		for _, s := range stockMap {
+			finalStocks = append(finalStocks, s)
+		}
+		fmt.Printf("增量更新: 新增 %d 只股票, 总计 %d 只\n", newCount, len(finalStocks))
+	} else {
+		finalStocks = newStocks
+		fmt.Printf("全量更新: 获取 %d 只股票\n", len(finalStocks))
+	}
+
+	// 5. 保存到Redis
+	if err := cache.Set(stockListCacheKey, finalStocks, cacheDuration); err != nil {
+		fmt.Printf("保存到Redis失败: %v\n", err)
+	}
+
+	return finalStocks, false
 }
 
 // fetchAndMergeStocks 从多个数据源获取股票并合并去重
@@ -345,7 +375,7 @@ func fetchEMStocks(fs string) ([]Stock, error) {
 
 // fetchEMStocksPage 从东方财富API获取单页股票
 func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
-	url := fmt.Sprintf("https://push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=%d&fs=%s&fields=f12,f14", page, pageSize, fs)
+	url := fmt.Sprintf("https://push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=%d&fs=%s&fields=f12,f14,f100", page, pageSize, fs)
 
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -378,8 +408,9 @@ func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
 
 	// diff 结构
 	type DiffItem struct {
-		F12 string `json:"f12"` // 代码
-		F14 string `json:"f14"` // 名称
+		F12  string `json:"f12"`  // 代码
+		F14  string `json:"f14"`  // 名称
+		F100 string `json:"f100"` // 行业
 	}
 
 	var diffList []DiffItem
@@ -407,8 +438,9 @@ func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
 	var stocks []Stock
 	for _, item := range diffList {
 		stocks = append(stocks, Stock{
-			Code: item.F12,
-			Name: item.F14,
+			Code:     item.F12,
+			Name:     item.F14,
+			Industry: item.F100,
 		})
 	}
 
@@ -425,7 +457,7 @@ func min(a, b int) int {
 
 // SearchStocks 搜索股票
 func SearchStocks(keyword string) ([]Stock, error) {
-	stocks, _ := SearchStocksWithRefresh(keyword, false)
+	stocks, _, _ := SearchStocksWithRefresh(keyword, false)
 	return stocks, nil
 }
 
@@ -437,16 +469,21 @@ type SearchStocksResult struct {
 }
 
 // SearchStocksWithRefresh 搜索股票，支持强制刷新，返回是否来自缓存
-func SearchStocksWithRefresh(keyword string, forceRefresh bool) ([]Stock, bool) {
+// 第三个返回值表示刷新是否失败（用于前端显示错误提示）
+func SearchStocksWithRefresh(keyword string, forceRefresh bool) ([]Stock, bool, bool) {
 	allStocks, fromCache := GetStockListWithRefresh2(forceRefresh)
+
+	// 如果是刷新操作但返回的是缓存数据，说明第三方接口获取失败
+	refreshFailed := forceRefresh && fromCache
+
 	if len(allStocks) == 0 {
-		return nil, false
+		return nil, false, true
 	}
 
 	fmt.Printf("股票总数: %d, 搜索关键词: %s\n", len(allStocks), keyword)
 
 	if keyword == "" {
-		return allStocks, fromCache
+		return allStocks, fromCache, refreshFailed
 	}
 
 	keyword = strings.ToUpper(keyword)
@@ -487,7 +524,7 @@ func SearchStocksWithRefresh(keyword string, forceRefresh bool) ([]Stock, bool) 
 		result = result[:100]
 	}
 
-	return result, fromCache
+	return result, fromCache, false
 }
 
 // GetStockInfo 获取股票信息
@@ -513,4 +550,49 @@ func GetStockName(code string) (string, error) {
 		return "", err
 	}
 	return info.Name, nil
+}
+
+// GetStockIndustry 获取股票行业（从东方财富单独获取）
+func GetStockIndustry(code string) string {
+	// 先从缓存中查找
+	info, err := GetStockInfo(code)
+	if err == nil && info.Industry != "" {
+		return info.Industry
+	}
+
+	// 缓存中没有行业信息，从东方财富单独获取
+	market := "0" // 深市
+	if strings.HasPrefix(code, "6") {
+		market = "1" // 沪市
+	}
+
+	url := fmt.Sprintf("https://push2.eastmoney.com/api/qt/stock/get?secid=%s.%s&fields=f100", market, code)
+
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Referer", "https://quote.eastmoney.com")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+
+	var result struct {
+		Data struct {
+			F100 string `json:"f100"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return ""
+	}
+
+	return result.Data.F100
 }

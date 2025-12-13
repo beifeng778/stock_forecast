@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"stock-forecast-backend/internal/cache"
 	"stock-forecast-backend/internal/handler"
 	"stock-forecast-backend/internal/scheduler"
 
@@ -49,6 +50,11 @@ func init() {
 }
 
 func main() {
+	// 初始化Redis
+	if err := cache.InitRedis(); err != nil {
+		log.Printf("警告: %v，将使用内存缓存", err)
+	}
+
 	r := gin.Default()
 
 	// 配置 CORS
@@ -91,6 +97,9 @@ func main() {
 
 	// 启动定时任务（验证码轮换）
 	scheduler.StartScheduler()
+
+	// 启动股票缓存刷新定时任务（每天凌晨4点）
+	scheduler.StartStockCacheRefreshScheduler()
 
 	log.Printf("服务启动在端口 %s", port)
 	if err := r.Run(":" + port); err != nil {

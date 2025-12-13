@@ -134,8 +134,9 @@ const StockSelector: React.FC = () => {
         }
       } catch (error) {
         console.error("加载股票列表失败:", error);
-        message.error("加载股票列表失败");
-        setAllStocks([]);
+        message.error("第三方数据接口异常，请稍后再试");
+        // 失败时启动2分钟倒计时
+        startCooldown(120);
       } finally {
         setInitialLoading(false);
       }
@@ -260,7 +261,7 @@ const StockSelector: React.FC = () => {
           {!initialLoading && (
             <span className="stock-count">共 {allStocks.length} 只股票</span>
           )}
-          <Tooltip title="增量刷新：数据来自不稳定的三方接口，可能不全">
+          <Tooltip title="数据来自第三方接口，可能存在延迟">
             <Button
               className="refresh-btn"
               icon={<ReloadOutlined spin={initialLoading} />}

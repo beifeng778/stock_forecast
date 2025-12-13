@@ -51,11 +51,14 @@ func PredictStocks(codes []string, period string) ([]model.PredictResult, error)
 
 // predictSingleStock 预测单只股票
 func predictSingleStock(code, period string) (*model.PredictResult, error) {
-	// 1. 获取股票名称
-	stockName, err := stockdata.GetStockName(code)
-	if err != nil {
-		stockName = "未知"
+	// 1. 获取股票信息（名称和行业）
+	stockInfo, err := stockdata.GetStockInfo(code)
+	stockName := "未知"
+	if err == nil && stockInfo != nil {
+		stockName = stockInfo.Name
 	}
+	// 单独获取行业信息（因为新浪API没有行业数据）
+	industry := stockdata.GetStockIndustry(code)
 
 	// 2. 获取技术指标
 	indicators, err := stockdata.GetIndicators(code)
@@ -97,6 +100,7 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	return &model.PredictResult{
 		StockCode:    code,
 		StockName:    stockName,
+		Industry:     industry,
 		CurrentPrice: indicators.CurrentPrice,
 		Trend:        trend,
 		TrendCN:      trendCN,

@@ -9,3 +9,10 @@ services:
     env_file:
       - .env
     restart: always
+    networks:
+      - stock-network
+
+networks:
+  stock-network:
+    external: true
+    name: stock-forecast-network
