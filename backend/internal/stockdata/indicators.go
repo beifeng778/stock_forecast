@@ -323,7 +323,11 @@ func maxSlice(data []float64) float64 {
 
 // GetIndicators 获取股票技术指标
 func GetIndicators(code string) (*Indicators, error) {
-	kline, err := GetKline(code, "daily")
+	return GetIndicatorsWithRefresh(code, false)
+}
+
+func GetIndicatorsWithRefresh(code string, forceRefresh bool) (*Indicators, error) {
+	kline, err := GetKlineWithRefresh(code, "daily", forceRefresh)
 	if err != nil {
 		return nil, err
 	}

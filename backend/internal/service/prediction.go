@@ -3,11 +3,24 @@ package service
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"stock-forecast-backend/internal/langchain"
 	"stock-forecast-backend/internal/model"
 	"stock-forecast-backend/internal/stockdata"
 )
+
+func isTradingTimeNow() bool {
+	now := time.Now()
+	wd := now.Weekday()
+	if wd == time.Saturday || wd == time.Sunday {
+		return false
+	}
+	hhmm := now.Hour()*100 + now.Minute()
+	morning := hhmm >= 930 && hhmm < 1130
+	afternoon := hhmm >= 1300 && hhmm < 1500
+	return morning || afternoon
+}
 
 // PredictStocks 批量预测股票（保持原始顺序）
 func PredictStocks(codes []string, period string) ([]model.PredictResult, error) {
@@ -76,7 +89,8 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	}
 
 	// 2. 获取技术指标
-	indicators, err := stockdata.GetIndicators(code)
+	isIntraday := isTradingTimeNow()
+	indicators, err := stockdata.GetIndicatorsWithRefresh(code, isIntraday)
 	if err != nil {
 		return nil, fmt.Errorf("获取技术指标失败: %v", err)
 	}
@@ -105,6 +119,9 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	if err != nil {
 		analysis = "AI分析暂时不可用"
 	}
+	if isIntraday {
+		analysis = "盘中未收盘（已实时刷新第三方日K）：\n\n" + analysis
+	}
 
 	// 8. 综合判断趋势
 	trend, trendCN, confidence := determineTrend(mlPredictions, signals)
@@ -120,6 +137,7 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		StockName:    stockName,
 		Sector:       sector,
 		Industry:     industry,
+		IsIntraday:   isIntraday,
 		CurrentPrice: indicators.CurrentPrice,
 		Trend:        trend,
 		TrendCN:      trendCN,

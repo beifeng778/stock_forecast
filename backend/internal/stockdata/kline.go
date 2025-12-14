@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"stock-forecast-backend/internal/cache"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // KlineData K线数据
@@ -28,30 +31,99 @@ type KlineResponse struct {
 	Data   []KlineData `json:"data"`
 }
 
-// GetKline 获取K线数据
+type klineCacheItem struct {
+	Value     *KlineResponse
+	ExpiresAt time.Time
+}
+
+var (
+	klineCacheMu sync.RWMutex
+	klineCache   = map[string]klineCacheItem{}
+)
+
+func getKlineCacheKey(code, period string) string {
+	return fmt.Sprintf("kline:%s:%s", code, period)
+}
+
+func getKlineCacheTTL(period string) time.Duration {
+	// 日/周/月K默认短缓存，既降低第三方压力，也避免盘中数据过旧。
+	// 盘中需要实时可通过 refresh=1 强制刷新。
+	switch period {
+	case "daily":
+		return 5 * time.Minute
+	case "weekly", "monthly":
+		return 30 * time.Minute
+	default:
+		return 5 * time.Minute
+	}
+}
+
+// GetKline 获取K线数据（默认允许缓存）
 func GetKline(code, period string) (*KlineResponse, error) {
+	return GetKlineWithRefresh(code, period, false)
+}
+
+// GetKlineWithRefresh 获取K线数据，forceRefresh=true 时绕过缓存直连第三方
+func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse, error) {
+	key := getKlineCacheKey(code, period)
+	if !forceRefresh {
+		// 1) 内存缓存
+		klineCacheMu.RLock()
+		item, ok := klineCache[key]
+		klineCacheMu.RUnlock()
+		if ok && item.Value != nil && time.Now().Before(item.ExpiresAt) {
+			return item.Value, nil
+		}
+
+		// 2) Redis缓存（可用则读取）
+		var cached KlineResponse
+		if err := cache.Get(key, &cached); err == nil && len(cached.Data) > 0 {
+			resp := &cached
+			klineCacheMu.Lock()
+			klineCache[key] = klineCacheItem{Value: resp, ExpiresAt: time.Now().Add(getKlineCacheTTL(period))}
+			klineCacheMu.Unlock()
+			return resp, nil
+		}
+	}
+
 	// 先尝试新浪接口
 	data, err := getKlineFromSina(code, period)
 	if err == nil && len(data) > 0 {
 		name, _ := GetStockName(code)
-		return &KlineResponse{
+		resp := &KlineResponse{
 			Code:   code,
 			Name:   name,
 			Period: period,
 			Data:   data,
-		}, nil
+		}
+
+		ttl := getKlineCacheTTL(period)
+		klineCacheMu.Lock()
+		klineCache[key] = klineCacheItem{Value: resp, ExpiresAt: time.Now().Add(ttl)}
+		klineCacheMu.Unlock()
+		_ = cache.Set(key, resp, ttl)
+
+		return resp, nil
 	}
 
 	// 新浪失败，尝试东方财富
 	data, err = getKlineFromEM(code, period)
 	if err == nil && len(data) > 0 {
 		name, _ := GetStockName(code)
-		return &KlineResponse{
+		resp := &KlineResponse{
 			Code:   code,
 			Name:   name,
 			Period: period,
 			Data:   data,
-		}, nil
+		}
+
+		ttl := getKlineCacheTTL(period)
+		klineCacheMu.Lock()
+		klineCache[key] = klineCacheItem{Value: resp, ExpiresAt: time.Now().Add(ttl)}
+		klineCacheMu.Unlock()
+		_ = cache.Set(key, resp, ttl)
+
+		return resp, nil
 	}
 
 	return nil, fmt.Errorf("获取K线数据失败")

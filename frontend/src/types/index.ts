@@ -91,6 +91,7 @@ export interface PredictResult {
   stock_name: string;
   sector?: string; // 板块
   industry?: string; // 主营业务行业
+  is_intraday?: boolean;
   current_price: number;
   trend: string;
   trend_cn: string;

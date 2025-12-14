@@ -24,7 +24,7 @@ func GetStocks(c *gin.Context) {
 	}
 
 	// 获取全量列表时，空结果算错误
-	if keyword == "" && (stocks == nil || len(stocks) == 0) {
+	if keyword == "" && len(stocks) == 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "第三方数据接口异常，请稍后再试",
 		})
@@ -41,8 +41,15 @@ func GetStocks(c *gin.Context) {
 func GetKline(c *gin.Context) {
 	code := c.Param("code")
 	period := c.DefaultQuery("period", "daily")
+	refresh := c.Query("refresh") == "1"
 
-	kline, err := stockdata.GetKline(code, period)
+	// 避免浏览器/代理缓存影响盘中刷新
+	// refresh=1 时强制刷新语义更明确；同时对所有请求返回 no-store，防止拿到陈旧数据
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+
+	kline, err := stockdata.GetKlineWithRefresh(code, period, refresh)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

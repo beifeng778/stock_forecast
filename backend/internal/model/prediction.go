@@ -19,6 +19,7 @@ type PredictResult struct {
 	StockName       string              `json:"stock_name"`
 	Sector          string              `json:"sector"`   // 板块
 	Industry        string              `json:"industry"` // 主营业务行业
+	IsIntraday      bool                `json:"is_intraday"`
 	CurrentPrice    float64             `json:"current_price"`
 	Trend           string              `json:"trend"`            // up, down, sideways
 	TrendCN         string              `json:"trend_cn"`         // 看涨, 看跌, 震荡

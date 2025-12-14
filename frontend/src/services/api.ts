@@ -52,10 +52,16 @@ export async function getStocks(
 // 获取K线数据
 export async function getKline(
   code: string,
-  period: string = "daily"
+  period: string = "daily",
+  refresh?: boolean
 ): Promise<KlineResponse> {
   const response = await api.get(`/stocks/${code}/kline`, {
-    params: { period },
+    params: {
+      period,
+      refresh: refresh ? "1" : undefined,
+      // 避免浏览器/中间层缓存
+      t: refresh ? Date.now() : undefined,
+    },
   });
   return response.data;
 }
