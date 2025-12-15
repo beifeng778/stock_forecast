@@ -148,6 +148,10 @@ func StartStockCacheRefreshScheduler() {
 		}
 	}
 
+	// 启动时是否立即执行
+	runOnStartup := os.Getenv("STOCK_CACHE_REFRESH_ON_STARTUP")
+	shouldRunOnStartup := runOnStartup == "true" || runOnStartup == "1"
+
 	// 解析刷新时间
 	parts := strings.Split(refreshTime, ":")
 	hour, minute := 4, 0
@@ -158,6 +162,17 @@ func StartStockCacheRefreshScheduler() {
 		if m, err := strconv.Atoi(parts[1]); err == nil {
 			minute = m
 		}
+	}
+
+	log.Printf("股票缓存刷新任务已启动，刷新时间: %02d:%02d，重试次数: %d，重试间隔: %d分钟，启动时执行: %v",
+		hour, minute, retryCount, retryInterval, shouldRunOnStartup)
+
+	// 如果配置了启动时执行，立即执行一次
+	if shouldRunOnStartup {
+		go func() {
+			log.Println("服务启动时执行股票缓存刷新...")
+			refreshWithRetry(retryCount, retryInterval)
+		}()
 	}
 
 	go func() {
@@ -246,8 +261,20 @@ func StartPostMarketUpdateScheduler() {
 		}
 	}
 
-	log.Printf("收盘后增量更新任务已启动，更新时间: %02d:%02d，重试次数: %d，重试间隔: %d分钟",
-		updateHour, updateMinute, retryCount, retryInterval)
+	// 启动时是否立即执行
+	runOnStartup := os.Getenv("POST_MARKET_UPDATE_ON_STARTUP")
+	shouldRunOnStartup := runOnStartup == "true" || runOnStartup == "1"
+
+	log.Printf("收盘后增量更新任务已启动，更新时间: %02d:%02d，重试次数: %d，重试间隔: %d分钟，启动时执行: %v",
+		updateHour, updateMinute, retryCount, retryInterval, shouldRunOnStartup)
+
+	// 如果配置了启动时执行，立即执行一次
+	if shouldRunOnStartup {
+		go func() {
+			log.Println("服务启动时执行收盘后增量更新...")
+			executePostMarketUpdateWithRetry(retryCount, retryInterval)
+		}()
+	}
 
 	go func() {
 		for {
@@ -304,26 +331,30 @@ func executePostMarketUpdateWithRetry(maxRetry, intervalMinutes int) {
 func executePostMarketUpdate() error {
 	start := time.Now()
 
-	// 获取热门股票列表
-	hotStocks := getHotStocks()
-	if len(hotStocks) == 0 {
-		log.Println("没有需要更新的热门股票")
+	// 获取全部股票列表
+	allStocks, err := stockdata.SearchStocks("")
+	if err != nil {
+		return fmt.Errorf("获取股票列表失败: %v", err)
+	}
+
+	if len(allStocks) == 0 {
+		log.Println("没有需要更新的股票")
 		return nil
 	}
 
-	log.Printf("开始更新 %d 只热门股票的K线数据...", len(hotStocks))
+	log.Printf("开始更新 %d 只股票的K线数据...", len(allStocks))
 
 	successCount := 0
 	failCount := 0
 
 	// 逐个更新，不使用批次
-	for _, code := range hotStocks {
+	for _, stock := range allStocks {
 		// 更新K线数据（强制刷新）
-		if _, err := stockdata.GetKlineWithRefresh(code, "daily", true); err != nil {
-			log.Printf("更新股票 %s K线数据失败: %v", code, err)
+		if _, err := stockdata.GetKlineWithRefresh(stock.Code, "daily", true); err != nil {
+			log.Printf("更新股票 %s K线数据失败: %v", stock.Code, err)
 			failCount++
 		} else {
-			log.Printf("股票 %s K线数据更新成功", code)
+			log.Printf("股票 %s K线数据更新成功", stock.Code)
 			successCount++
 		}
 
@@ -336,19 +367,10 @@ func executePostMarketUpdate() error {
 		duration, successCount, failCount)
 
 	// 如果失败数量超过一半，返回错误触发重试
-	if failCount > len(hotStocks)/2 {
-		return fmt.Errorf("更新失败数量过多: %d/%d", failCount, len(hotStocks))
+	if failCount > len(allStocks)/2 {
+		return fmt.Errorf("更新失败数量过多: %d/%d", failCount, len(allStocks))
 	}
 
 	return nil
 }
 
-// getHotStocks 获取热门股票列表
-func getHotStocks() []string {
-	// TODO: 从Redis或数据库中获取最近被查询的股票代码
-	// 这里返回一个示例列表，实际应该根据用户查询频率动态获取
-	return []string{
-		"000001", "000002", "000858", "002415", "002594",
-		"600000", "600036", "600519", "600887", "601318",
-	}
-}

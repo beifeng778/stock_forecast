@@ -168,9 +168,17 @@ const TrendChart: React.FC = () => {
   // 处理移动端点击置灰按钮的提示
   const handleDisabledRefreshClick = () => {
     if (refreshDisabled) {
-      message.info(refreshTooltipTitle);
+      message.info({
+        content: refreshTooltipTitle,
+        duration: 3,
+        style: {
+          marginTop: '10vh',
+        }
+      });
     }
   };
+
+
 
   // 预测K线数据类型
   interface PredictionKline {
@@ -830,16 +838,37 @@ const TrendChart: React.FC = () => {
             />
           )}
           {shouldShowRefreshButton && (
-            <Tooltip title={refreshTooltipTitle}>
-              <Button
-                size="small"
-                icon={<ReloadOutlined />}
-                onClick={refreshDisabled ? handleDisabledRefreshClick : handleRefresh}
-                disabled={refreshDisabled}
-              >
-                刷新
-              </Button>
-            </Tooltip>
+            <>
+              {/* 检测是否为移动端 */}
+              {/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? (
+                // 移动端：不显示 Tooltip，点击时显示 message
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={refreshDisabled ? handleDisabledRefreshClick : handleRefresh}
+                  disabled={false}
+                  style={refreshDisabled ? {
+                    opacity: 0.6,
+                    cursor: 'not-allowed',
+                    pointerEvents: 'auto'
+                  } : {}}
+                >
+                  刷新
+                </Button>
+              ) : (
+                // PC端：显示 Tooltip，按钮置灰时禁用
+                <Tooltip title={refreshTooltipTitle}>
+                  <Button
+                    size="small"
+                    icon={<ReloadOutlined />}
+                    onClick={refreshDisabled ? undefined : handleRefresh}
+                    disabled={refreshDisabled}
+                  >
+                    刷新
+                  </Button>
+                </Tooltip>
+              )}
+            </>
           )}
         </Space>
       </div>
