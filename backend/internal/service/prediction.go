@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -91,7 +92,16 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 
 	// 2. 获取技术指标
 	isIntraday := isTradingTimeNow()
-	indicators, err := stockdata.GetIndicatorsWithRefresh(code, isIntraday)
+	kline, err := stockdata.GetKlineWithRefresh(code, "daily", isIntraday)
+	if err != nil {
+		return nil, fmt.Errorf("获取技术指标失败: %v", err)
+	}
+	if kline == nil || len(kline.Data) == 0 {
+		return nil, fmt.Errorf("获取技术指标失败: 返回数据为空")
+	}
+
+	// 3. 转换技术指标
+	indicators, err := stockdata.CalculateIndicators(kline.Data)
 	if err != nil {
 		return nil, fmt.Errorf("获取技术指标失败: %v", err)
 	}
@@ -99,7 +109,6 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		return nil, fmt.Errorf("获取技术指标失败: 返回数据为空")
 	}
 
-	// 3. 转换技术指标
 	techIndicators := convertIndicators(indicators)
 
 	// 4. 生成技术信号（从 stockdata 获取）
@@ -137,7 +146,20 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	targetPrices := calculateTargetPricesWithNews(indicators.CurrentPrice, trend, confidence, newsImpact)
 
 	// 10. 获取近期每日涨跌幅
-	dailyChanges := getDailyChanges(code, 10)
+	dailyChanges := getDailyChangesFromKline(kline.Data, 10)
+
+	now := time.Now()
+	todayStr := now.Format("2006-01-02")
+	last := kline.Data[len(kline.Data)-1]
+	hasTodayData := last.Date == todayStr
+	needPredictToday := isIntraday && !hasTodayData
+
+	var aiToday *model.KlineData
+	if isIntraday && hasTodayData {
+		aiToday = generateTodayKline(kline.Data, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
+	}
+
+	futureKlines := generateFutureKlines(kline.Data, isIntraday, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
 
 	return &model.PredictResult{
 		StockCode:    code,
@@ -153,16 +175,214 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 			Low:  indicators.SupportLevel,
 			High: indicators.ResistanceLevel,
 		},
-		TargetPrices:    targetPrices,
-		SupportLevel:    indicators.SupportLevel,
-		ResistanceLevel: indicators.ResistanceLevel,
-		Indicators:      techIndicators,
-		Signals:         signals,
-		Analysis:        analysis,
-		NewsAnalysis:    newsAnalysis,
-		MLPredictions:   mlPredictions,
-		DailyChanges:    dailyChanges,
+		TargetPrices:     targetPrices,
+		FutureKlines:     futureKlines,
+		AIToday:          aiToday,
+		NeedPredictToday: needPredictToday,
+		SupportLevel:     indicators.SupportLevel,
+		ResistanceLevel:  indicators.ResistanceLevel,
+		Indicators:       techIndicators,
+		Signals:          signals,
+		Analysis:         analysis,
+		NewsAnalysis:     newsAnalysis,
+		MLPredictions:    mlPredictions,
+		DailyChanges:     dailyChanges,
 	}, nil
+}
+
+func generateTodayKline(history []stockdata.KlineData, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) *model.KlineData {
+	if len(history) < 2 {
+		return nil
+	}
+
+	now := time.Now()
+	todayStr := now.Format("2006-01-02")
+	last := history[len(history)-1]
+	if last.Date != todayStr {
+		return nil
+	}
+
+	anchorClose := history[len(history)-2].Close
+	if anchorClose <= 0 {
+		return nil
+	}
+
+	steps := 5
+	drift := 0.0
+	if targetPrice > 0 {
+		drift = (targetPrice/anchorClose - 1) / float64(steps)
+	}
+
+	baseVol := volatility
+	if baseVol <= 0 {
+		baseVol = 0.03
+	}
+	dailyStd := baseVol * (1.2 - confidence*0.4)
+	if dailyStd < 0.01 {
+		dailyStd = 0.01
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	open := anchorClose
+	ret := drift + rng.NormFloat64()*dailyStd*0.5
+	close := anchorClose * (1 + ret)
+	if close <= 0 {
+		close = anchorClose
+	}
+
+	rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.8
+	high := math.Max(open, close) * (1 + rangeFactor)
+	low := math.Min(open, close) * (1 - rangeFactor)
+	if low <= 0 {
+		low = math.Min(open, close)
+	}
+
+	_ = supportLevel
+	_ = resistanceLevel
+
+	return &model.KlineData{
+		Date:   todayStr,
+		Open:   round2(open),
+		Close:  round2(close),
+		High:   round2(high),
+		Low:    round2(low),
+		Volume: last.Volume,
+		Amount: last.Amount,
+	}
+}
+
+func getDailyChangesFromKline(data []stockdata.KlineData, days int) []model.DailyChange {
+	n := len(data)
+	if n < 2 {
+		return nil
+	}
+
+	start := n - days
+	if start < 1 {
+		start = 1
+	}
+
+	var changes []model.DailyChange
+	for i := start; i < n; i++ {
+		prevClose := data[i-1].Close
+		change := 0.0
+		if prevClose > 0 {
+			change = (data[i].Close - prevClose) / prevClose * 100
+		}
+		changes = append(changes, model.DailyChange{
+			Date:   data[i].Date,
+			Change: change,
+			Close:  data[i].Close,
+		})
+	}
+
+	return changes
+}
+
+func generateFutureKlines(history []stockdata.KlineData, isIntraday bool, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) []model.KlineData {
+	if len(history) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	todayStr := now.Format("2006-01-02")
+	last := history[len(history)-1]
+	hasTodayData := last.Date == todayStr
+
+	anchorClose := last.Close
+	if hasTodayData && isIntraday && len(history) >= 2 {
+		anchorClose = history[len(history)-2].Close
+	}
+	if anchorClose <= 0 {
+		return nil
+	}
+
+	recent := history
+	if len(recent) > 20 {
+		recent = recent[len(recent)-20:]
+	}
+	avgVolume := 0.0
+	for _, d := range recent {
+		avgVolume += d.Volume
+	}
+	if len(recent) > 0 {
+		avgVolume = avgVolume / float64(len(recent))
+	}
+
+	steps := 5
+	drift := 0.0
+	if targetPrice > 0 {
+		drift = (targetPrice/anchorClose - 1) / float64(steps)
+	}
+
+	baseVol := volatility
+	if baseVol <= 0 {
+		baseVol = 0.03
+	}
+	dailyStd := baseVol * (1.2 - confidence*0.4)
+	if dailyStd < 0.01 {
+		dailyStd = 0.01
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	currentDate := now
+	if !isIntraday || hasTodayData {
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+
+	prevClose := anchorClose
+	result := make([]model.KlineData, 0, steps)
+	for len(result) < steps {
+		wd := currentDate.Weekday()
+		if wd == time.Saturday || wd == time.Sunday {
+			currentDate = currentDate.AddDate(0, 0, 1)
+			continue
+		}
+
+		gap := rng.NormFloat64() * dailyStd * 0.15
+		open := prevClose * (1 + gap)
+		ret := drift + rng.NormFloat64()*dailyStd*0.5
+		close := prevClose * (1 + ret)
+		if close <= 0 {
+			close = prevClose
+		}
+
+		rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.8
+		high := math.Max(open, close) * (1 + rangeFactor)
+		low := math.Min(open, close) * (1 - rangeFactor)
+		if low <= 0 {
+			low = math.Min(open, close)
+		}
+
+		volume := avgVolume
+		if volume > 0 {
+			volume = volume * (0.7 + 0.6*rng.Float64())
+		}
+		amount := volume * close
+
+		_ = supportLevel
+		_ = resistanceLevel
+
+		result = append(result, model.KlineData{
+			Date:   currentDate.Format("2006-01-02"),
+			Open:   round2(open),
+			Close:  round2(close),
+			High:   round2(high),
+			Low:    round2(low),
+			Volume: volume,
+			Amount: amount,
+		})
+
+		prevClose = close
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+
+	return result
+}
+
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }
 
 // convertIndicators 转换技术指标
@@ -403,11 +623,11 @@ func determineTrendWithNews(ml model.MLPredictions, signals []model.Signal, news
 		// 一般性新闻影响：调整置信度
 		sentimentAdjustment := newsImpact.SentimentScore * newsWeight
 		if (baseTrend == "up" && newsImpact.SentimentScore > 0) ||
-		   (baseTrend == "down" && newsImpact.SentimentScore < 0) {
+			(baseTrend == "down" && newsImpact.SentimentScore < 0) {
 			// 新闻与技术面同向，增强置信度
 			adjustedConfidence += math.Abs(sentimentAdjustment)
 		} else if (baseTrend == "up" && newsImpact.SentimentScore < 0) ||
-				  (baseTrend == "down" && newsImpact.SentimentScore > 0) {
+			(baseTrend == "down" && newsImpact.SentimentScore > 0) {
 			// 新闻与技术面反向，降低置信度
 			adjustedConfidence -= math.Abs(sentimentAdjustment)
 		}
@@ -591,33 +811,7 @@ func getDailyChanges(code string, days int) []model.DailyChange {
 		return nil
 	}
 
-	data := kline.Data
-	n := len(data)
-	if n < 2 {
-		return nil
-	}
-
-	// 取最近days天的数据
-	start := n - days
-	if start < 1 {
-		start = 1
-	}
-
-	var changes []model.DailyChange
-	for i := start; i < n; i++ {
-		prevClose := data[i-1].Close
-		change := 0.0
-		if prevClose > 0 {
-			change = (data[i].Close - prevClose) / prevClose * 100
-		}
-		changes = append(changes, model.DailyChange{
-			Date:   data[i].Date,
-			Change: change,
-			Close:  data[i].Close,
-		})
-	}
-
-	return changes
+	return getDailyChangesFromKline(kline.Data, days)
 }
 
 // calculateTargetPricesWithNews 计算目标价位（考虑新闻影响）

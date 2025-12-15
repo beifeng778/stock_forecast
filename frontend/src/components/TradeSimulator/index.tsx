@@ -9,10 +9,8 @@ import {
   Statistic,
   Row,
   Col,
-  Descriptions,
   message,
   Empty,
-  Tabs,
 } from "antd";
 import {
   ArrowUpOutlined,

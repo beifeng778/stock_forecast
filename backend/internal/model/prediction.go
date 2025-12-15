@@ -15,25 +15,28 @@ type DailyChange struct {
 
 // PredictResult 预测结果
 type PredictResult struct {
-	StockCode       string              `json:"stock_code"`
-	StockName       string              `json:"stock_name"`
-	Sector          string              `json:"sector"`   // 板块
-	Industry        string              `json:"industry"` // 主营业务行业
-	IsIntraday      bool                `json:"is_intraday"`
-	CurrentPrice    float64             `json:"current_price"`
-	Trend           string              `json:"trend"`            // up, down, sideways
-	TrendCN         string              `json:"trend_cn"`         // 看涨, 看跌, 震荡
-	Confidence      float64             `json:"confidence"`       // 0-100
-	PriceRange      PriceRange          `json:"price_range"`      // 预测价格区间
-	TargetPrices    TargetPrices        `json:"target_prices"`    // 目标价位
-	SupportLevel    float64             `json:"support_level"`    // 支撑位
-	ResistanceLevel float64             `json:"resistance_level"` // 压力位
-	Indicators      TechnicalIndicators `json:"indicators"`       // 技术指标
-	Signals         []Signal            `json:"signals"`          // 技术信号
-	Analysis        string              `json:"analysis"`         // AI分析
-	NewsAnalysis    string              `json:"news_analysis"`    // 消息面分析
-	MLPredictions   MLPredictions       `json:"ml_predictions"`   // ML模型预测
-	DailyChanges    []DailyChange       `json:"daily_changes"`    // 近期每日涨跌幅
+	StockCode        string              `json:"stock_code"`
+	StockName        string              `json:"stock_name"`
+	Sector           string              `json:"sector"`   // 板块
+	Industry         string              `json:"industry"` // 主营业务行业
+	IsIntraday       bool                `json:"is_intraday"`
+	CurrentPrice     float64             `json:"current_price"`
+	Trend            string              `json:"trend"`         // up, down, sideways
+	TrendCN          string              `json:"trend_cn"`      // 看涨, 看跌, 震荡
+	Confidence       float64             `json:"confidence"`    // 0-100
+	PriceRange       PriceRange          `json:"price_range"`   // 预测价格区间
+	TargetPrices     TargetPrices        `json:"target_prices"` // 目标价位
+	FutureKlines     []KlineData         `json:"future_klines,omitempty"`
+	AIToday          *KlineData          `json:"ai_today,omitempty"`
+	NeedPredictToday bool                `json:"need_predict_today,omitempty"`
+	SupportLevel     float64             `json:"support_level"`    // 支撑位
+	ResistanceLevel  float64             `json:"resistance_level"` // 压力位
+	Indicators       TechnicalIndicators `json:"indicators"`       // 技术指标
+	Signals          []Signal            `json:"signals"`          // 技术信号
+	Analysis         string              `json:"analysis"`         // AI分析
+	NewsAnalysis     string              `json:"news_analysis"`    // 消息面分析
+	MLPredictions    MLPredictions       `json:"ml_predictions"`   // ML模型预测
+	DailyChanges     []DailyChange       `json:"daily_changes"`    // 近期每日涨跌幅
 }
 
 // PriceRange 价格区间

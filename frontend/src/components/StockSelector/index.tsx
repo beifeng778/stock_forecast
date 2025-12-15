@@ -54,7 +54,6 @@ const StockSelector: React.FC = () => {
   const {
     selectedStocks,
     addStock,
-    removeStock,
     removeStockWithData,
     period,
     setPredictions,
@@ -65,7 +64,6 @@ const StockSelector: React.FC = () => {
     clearAllData,
     updateStockNames,
   } = useStockStore();
-
 
   // 加载股票列表（始终从缓存获取）
   const loadStockList = useCallback(
@@ -187,7 +185,7 @@ const StockSelector: React.FC = () => {
     if (!valid) return;
 
     // 找到要删除的股票信息
-    const stock = selectedStocks.find(s => s.code === code);
+    const stock = selectedStocks.find((s) => s.code === code);
     const stockName = stock ? `${stock.code} ${stock.name}` : code;
 
     Modal.confirm({

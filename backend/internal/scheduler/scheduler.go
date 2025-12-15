@@ -333,14 +333,13 @@ func executePostMarketUpdate() error {
 	log.Println("开始执行收盘后全量数据刷新...")
 
 	// 直接调用全量刷新股票缓存，这样更高效且避免风控
-	count, err := stockdata.RefreshStockCache()
+	stocks, err := stockdata.RefreshStockCache()
 	if err != nil {
 		return fmt.Errorf("收盘后全量刷新失败: %v", err)
 	}
 
 	duration := time.Since(start)
-	log.Printf("收盘后全量刷新完成，耗时: %v，更新股票数量: %d", duration, count)
+	log.Printf("收盘后全量刷新完成，耗时: %v，更新股票数量: %d", duration, len(stocks))
 
 	return nil
 }
-

@@ -13,7 +13,6 @@ import { getKline, getSystemConfig } from "../../services/api";
 import type { KlineData } from "../../types";
 import "./index.css";
 
-
 // 判断A股是否已收盘（15:00收盘）
 const isMarketClosed = (): boolean => {
   const now = new Date();
@@ -51,7 +50,8 @@ const TrendChart: React.FC = () => {
   const [klineData, setKlineData] = useState<KlineData[]>([]);
   const [stockName, setStockName] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [refreshAvailableTime, setRefreshAvailableTime] = useState<string>("17:00");
+  const [refreshAvailableTime, setRefreshAvailableTime] =
+    useState<string>("17:00");
   const chartRef = useRef<any>(null);
 
   // 获取系统配置
@@ -130,30 +130,30 @@ const TrendChart: React.FC = () => {
 
   // 添加全局点击事件来处理tooltip失焦
   useEffect(() => {
-    const handleGlobalClick = (event: MouseEvent) => {
+    const handleGlobalClick = (event: Event) => {
       const chartInstance = chartRef.current?.getEchartsInstance();
       if (chartInstance) {
         const chartContainer = chartRef.current?.ele;
         // 如果点击的不是图表区域，隐藏tooltip
         if (chartContainer && !chartContainer.contains(event.target as Node)) {
           chartInstance.dispatchAction({
-            type: 'hideTip'
+            type: "hideTip",
           });
         }
       }
     };
 
-    document.addEventListener('click', handleGlobalClick);
-    document.addEventListener('touchstart', handleGlobalClick);
+    document.addEventListener("click", handleGlobalClick);
+    document.addEventListener("touchstart", handleGlobalClick);
 
     return () => {
-      document.removeEventListener('click', handleGlobalClick);
-      document.removeEventListener('touchstart', handleGlobalClick);
+      document.removeEventListener("click", handleGlobalClick);
+      document.removeEventListener("touchstart", handleGlobalClick);
     };
   }, []);
 
   // 只在交易日显示刷新按钮
-  const shouldShowRefreshButton = isTradingDay();
+  const shouldShowRefreshButton = isTradingDay() || isTradingTime();
   const canRefresh = Boolean(currentStock) && isRefreshTimeAvailable();
   const refreshDisabled = !canRefresh || loading;
   const refreshTooltipTitle = !canRefresh
@@ -172,195 +172,30 @@ const TrendChart: React.FC = () => {
         content: refreshTooltipTitle,
         duration: 3,
         style: {
-          marginTop: '10vh',
-        }
+          marginTop: "10vh",
+        },
       });
     }
   };
 
-
-
-  // 预测K线数据类型
-  interface PredictionKline {
-    date: string;
-    open: number;
-    close: number;
-    high: number;
-    low: number;
-    volume: number;
-  }
-
-  // 生成未来5日预测数据（完整K线格式）- 使用useMemo避免重复计算
   const predictionData = useMemo(() => {
     const prediction = predictions.find((p) => p.stock_code === currentStock);
-    if (!prediction || klineData.length === 0) return null;
-
-    const lastKline = klineData[klineData.length - 1];
-    const today = new Date();
-    const todayStr = today.toISOString().split("T")[0];
-    const lastDataDate = lastKline.date;
-    const hasTodayData = lastDataDate === todayStr;
-    const hhmmNow = getHHMM(today);
-    const isTradingDayNow = today.getDay() !== 0 && today.getDay() !== 6;
-    const isIntraday = isTradingDayNow && hhmmNow >= 930 && hhmmNow < 1500;
-    const isAfterClose = isTradingDayNow && hhmmNow >= 1500;
-    const baseCloseForPrediction = (() => {
-      if (!hasTodayData) return lastKline?.close || 0;
-      if (isIntraday && klineData.length >= 2) {
-        return klineData[klineData.length - 2].close;
-      }
-      if (isAfterClose) {
-        return lastKline?.close || 0;
-      }
-      return lastKline?.close || 0;
-    })();
-
-    const lastPrice = baseCloseForPrediction;
-    const targetPrice = prediction.target_prices.short;
-    const supportLevel = prediction.support_level;
-    const resistanceLevel = prediction.resistance_level;
-    const confidence = prediction.confidence;
-
-    const dataForStats =
-      hasTodayData && isIntraday && klineData.length >= 2
-        ? klineData.slice(0, -1)
-        : klineData;
-    const recentData = dataForStats.slice(-20);
-    let avgVolatility = 0;
-    let avgVolume = 0;
-    recentData.forEach((d) => {
-      avgVolatility += (d.high - d.low) / d.close;
-      avgVolume += d.volume;
-    });
-    avgVolatility = avgVolatility / recentData.length;
-    avgVolume = avgVolume / recentData.length;
-
-    const predictionKlines: PredictionKline[] = [];
-    const dates: string[] = [];
-    const needPredictToday = isIntraday && !hasTodayData;
-
-    // 从下一个需要预测的交易日开始生成（避免历史今日+预测今日重复）
-    let currentDate = new Date(today);
-    if (!isIntraday || hasTodayData) {
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-    let prevClose = lastPrice;
-    let dayIndex = 0;
-
-    const totalDays = 5;
-    // 生成随机波动因子，让曲线更自然
-    const randomFactors: number[] = [];
-    for (let i = 0; i < totalDays; i++) {
-      randomFactors.push((Math.random() - 0.5) * 0.6);
-    }
-    randomFactors[totalDays - 1] = 0;
-
-    while (predictionKlines.length < totalDays) {
-      // 跳过周末
-      while (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-      const dateStr = currentDate.toISOString().split("T")[0];
-      dates.push(dateStr);
-      dayIndex++;
-
-      // 使用缓动函数让曲线更自然（ease-in-out效果）
-      const progress = dayIndex / totalDays;
-      const easedProgress =
-        progress < 0.5
-          ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-
-      // 基础目标价 + 随机波动
-      const baseTarget = lastPrice + (targetPrice - lastPrice) * easedProgress;
-      const randomWave =
-        (targetPrice - lastPrice) * randomFactors[dayIndex - 1];
-      const targetClose = baseTarget + randomWave;
-
-      const volatilityFactor = avgVolatility * (1.2 - confidence * 0.4);
-      const gapFactor = (Math.random() - 0.5) * 0.015;
-      const open = prevClose * (1 + gapFactor);
-      const close = targetClose;
-
-      const priceRangeSpread = resistanceLevel - supportLevel;
-      const dayRange = Math.max(
-        close * volatilityFactor,
-        priceRangeSpread * 0.1
-      );
-
-      const isUp = close > open;
-      let high, low;
-      if (isUp) {
-        high = Math.max(open, close) + dayRange * 0.3;
-        low = Math.min(open, close) - dayRange * 0.2;
-      } else {
-        high = Math.max(open, close) + dayRange * 0.2;
-        low = Math.min(open, close) - dayRange * 0.3;
-      }
-
-      high = Math.min(Math.max(high, open, close), resistanceLevel);
-      low = Math.max(Math.min(low, open, close), supportLevel);
-
-      const volumeFactor = 0.8 + Math.random() * 0.4;
-      const volume = Math.round(avgVolume * volumeFactor);
-
-      predictionKlines.push({
-        date: dateStr,
-        open: parseFloat(open.toFixed(2)),
-        close: parseFloat(close.toFixed(2)),
-        high: parseFloat(high.toFixed(2)),
-        low: parseFloat(low.toFixed(2)),
-        volume,
-      });
-
-      prevClose = close;
-      currentDate.setDate(currentDate.getDate() + 1);
+    if (
+      !prediction ||
+      !prediction.future_klines ||
+      prediction.future_klines.length === 0
+    ) {
+      return null;
     }
 
-    let aiToday: PredictionKline | null = null;
-    if (isIntraday && hasTodayData && klineData.length >= 2) {
-      const basePriceForToday = klineData[klineData.length - 2].close;
-      const progress = 1 / totalDays;
-      const easedProgress =
-        progress < 0.5
-          ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-      const close =
-        basePriceForToday + (targetPrice - basePriceForToday) * easedProgress;
-
-      const volatilityFactor = avgVolatility * (1.2 - confidence * 0.4);
-      const open = basePriceForToday;
-      const priceRangeSpread = resistanceLevel - supportLevel;
-      const dayRange = Math.max(
-        close * volatilityFactor,
-        priceRangeSpread * 0.1
-      );
-      const isUp = close > open;
-      let high: number;
-      let low: number;
-      if (isUp) {
-        high = Math.max(open, close) + dayRange * 0.3;
-        low = Math.min(open, close) - dayRange * 0.2;
-      } else {
-        high = Math.max(open, close) + dayRange * 0.2;
-        low = Math.min(open, close) - dayRange * 0.3;
-      }
-      high = Math.min(Math.max(high, open, close), resistanceLevel);
-      low = Math.max(Math.min(low, open, close), supportLevel);
-      const volume = Math.round(avgVolume);
-
-      aiToday = {
-        date: todayStr,
-        open: parseFloat(open.toFixed(2)),
-        close: parseFloat(close.toFixed(2)),
-        high: parseFloat(high.toFixed(2)),
-        low: parseFloat(low.toFixed(2)),
-        volume,
-      };
-    }
-
-    return { dates, klines: predictionKlines, needPredictToday, aiToday };
-  }, [currentStock, klineData, predictions]);
+    const dates = prediction.future_klines.map((k) => k.date);
+    return {
+      dates,
+      klines: prediction.future_klines,
+      needPredictToday: !!prediction.need_predict_today,
+      aiToday: prediction.ai_today || null,
+    };
+  }, [currentStock, predictions]);
 
   // 当预测数据生成后保存到store
   useEffect(() => {
@@ -447,7 +282,7 @@ const TrendChart: React.FC = () => {
         name: "AI预测(5日)",
         type: "line",
         data: predictionPrices,
-        smooth: true,
+        smooth: false,
         symbol: "circle",
         symbolSize: 6,
         lineStyle: {
@@ -500,10 +335,16 @@ const TrendChart: React.FC = () => {
         confine: true, // 限制tooltip在图表区域内
         transitionDuration: 0.1, // 减少过渡时间，让移动更流畅
         alwaysShowContent: false, // 确保不会一直显示
-        triggerOn: 'mousemove|click', // 支持鼠标移动和点击触发，移动端更友好
+        triggerOn: "mousemove|click", // 支持鼠标移动和点击触发，移动端更友好
         appendToBody: false, // 不添加到body，避免定位问题
-        renderMode: 'html', // 使用HTML渲染模式，提升性能
-        position: function (point: number[], params: any, dom: HTMLElement, rect: any, size: any) {
+        renderMode: "html", // 使用HTML渲染模式，提升性能
+        position: function (
+          point: number[],
+          _params: any,
+          _dom: HTMLElement,
+          _rect: any,
+          size: any
+        ) {
           // 简化定位逻辑，让tooltip流畅跟随鼠标
           const [x, y] = point;
           const tooltipWidth = size.contentSize[0];
@@ -840,18 +681,26 @@ const TrendChart: React.FC = () => {
           {shouldShowRefreshButton && (
             <>
               {/* 检测是否为移动端 */}
-              {/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? (
+              {/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                navigator.userAgent
+              ) ? (
                 // 移动端：不显示 Tooltip，点击时显示 message
                 <Button
                   size="small"
                   icon={<ReloadOutlined />}
-                  onClick={refreshDisabled ? handleDisabledRefreshClick : handleRefresh}
+                  onClick={
+                    refreshDisabled ? handleDisabledRefreshClick : handleRefresh
+                  }
                   disabled={false}
-                  style={refreshDisabled ? {
-                    opacity: 0.6,
-                    cursor: 'not-allowed',
-                    pointerEvents: 'auto'
-                  } : {}}
+                  style={
+                    refreshDisabled
+                      ? {
+                          opacity: 0.6,
+                          cursor: "not-allowed",
+                          pointerEvents: "auto",
+                        }
+                      : {}
+                  }
                 >
                   刷新
                 </Button>
@@ -892,7 +741,8 @@ const TrendChart: React.FC = () => {
               // 只有在关键数据变化时才重新设置option，避免倒计时更新导致的闪烁
               return (
                 prevProps.option !== nextProps.option ||
-                JSON.stringify(prevProps.option) !== JSON.stringify(nextProps.option)
+                JSON.stringify(prevProps.option) !==
+                  JSON.stringify(nextProps.option)
               );
             }}
           />
