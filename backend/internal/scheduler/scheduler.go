@@ -330,46 +330,16 @@ func executePostMarketUpdateWithRetry(maxRetry, intervalMinutes int) {
 // executePostMarketUpdate 执行收盘后增量更新
 func executePostMarketUpdate() error {
 	start := time.Now()
+	log.Println("开始执行收盘后全量数据刷新...")
 
-	// 获取全部股票列表
-	allStocks, err := stockdata.SearchStocks("")
+	// 直接调用全量刷新股票缓存，这样更高效且避免风控
+	count, err := stockdata.RefreshStockCache()
 	if err != nil {
-		return fmt.Errorf("获取股票列表失败: %v", err)
-	}
-
-	if len(allStocks) == 0 {
-		log.Println("没有需要更新的股票")
-		return nil
-	}
-
-	log.Printf("开始更新 %d 只股票的K线数据...", len(allStocks))
-
-	successCount := 0
-	failCount := 0
-
-	// 逐个更新，不使用批次
-	for _, stock := range allStocks {
-		// 更新K线数据（强制刷新）
-		if _, err := stockdata.GetKlineWithRefresh(stock.Code, "daily", true); err != nil {
-			log.Printf("更新股票 %s K线数据失败: %v", stock.Code, err)
-			failCount++
-		} else {
-			log.Printf("股票 %s K线数据更新成功", stock.Code)
-			successCount++
-		}
-
-		// 请求间隔，避免被反爬（每只股票间隔3秒）
-		time.Sleep(3 * time.Second)
+		return fmt.Errorf("收盘后全量刷新失败: %v", err)
 	}
 
 	duration := time.Since(start)
-	log.Printf("收盘后增量更新任务完成，耗时: %v，成功: %d，失败: %d",
-		duration, successCount, failCount)
-
-	// 如果失败数量超过一半，返回错误触发重试
-	if failCount > len(allStocks)/2 {
-		return fmt.Errorf("更新失败数量过多: %d/%d", failCount, len(allStocks))
-	}
+	log.Printf("收盘后全量刷新完成，耗时: %v，更新股票数量: %d", duration, count)
 
 	return nil
 }
