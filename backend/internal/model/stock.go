@@ -42,4 +42,28 @@ type TechnicalIndicators struct {
 	BOLL_U float64 `json:"boll_upper"`
 	BOLL_M float64 `json:"boll_middle"`
 	BOLL_L float64 `json:"boll_lower"`
+	// 动量指标
+	Change1D  float64 `json:"change_1d"`  // 1日涨跌幅
+	Change5D  float64 `json:"change_5d"`  // 5日涨跌幅
+	Change10D float64 `json:"change_10d"` // 10日涨跌幅
+	MA5Slope  float64 `json:"ma5_slope"`  // MA5斜率
+	// 成交量指标
+	CurrentVolume   float64 `json:"current_volume"`    // 当前成交量
+	VolumeMA5       float64 `json:"volume_ma5"`        // 5日成交量均线
+	VolumeMA10      float64 `json:"volume_ma10"`       // 10日成交量均线
+	VolumeRatio     float64 `json:"volume_ratio"`      // 量比（当日/5日均量）
+	PriceVolumeDiv  string  `json:"price_volume_div"`  // 量价背离信号
+	VolumeStrength  float64 `json:"volume_strength"`   // 成交量强度
+	// 动态阈值
+	RSIUpperThreshold float64 `json:"rsi_upper_threshold"` // RSI动态超买阈值
+	RSILowerThreshold float64 `json:"rsi_lower_threshold"` // RSI动态超卖阈值
+	// 市场环境
+	MarketTrend    string  `json:"market_trend"`     // 市场趋势：bull/bear/sideways
+	Volatility     float64 `json:"volatility"`       // 价格波动率
+	TrendStrength  float64 `json:"trend_strength"`   // 趋势强度
+	// 突破信号
+	BollBreakout   string  `json:"boll_breakout"`    // 布林带突破信号
+	VolumeBreakout bool    `json:"volume_breakout"`  // 成交量突破确认
+	PriceAccel     float64 `json:"price_accel"`      // 价格加速度
+	MomentumScore  float64 `json:"momentum_score"`   // 综合动量评分
 }

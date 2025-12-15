@@ -282,6 +282,47 @@
   font-size: 12px;
 }
 
+/* 消息面分析样式 */
+.news-analysis-content {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 8px;
+  border-left: 3px solid #f59e0b;
+}
+
+.news-analysis-content p {
+  margin: 0 0 8px 0;
+  color: #e2e8f0;
+}
+
+.news-analysis-content p:last-child {
+  margin-bottom: 0;
+}
+
+.news-analysis-content strong {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.news-analysis-content ul,
+.news-analysis-content ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.news-analysis-content li {
+  margin: 4px 0;
+}
+
+.news-analysis-content h1,
+.news-analysis-content h2,
+.news-analysis-content h3,
+.news-analysis-content h4 {
+  color: #fbbf24;
+  margin: 12px 0 8px 0;
+}
+
 .target-prices {
   margin-top: 12px;
 }
@@ -410,15 +451,9 @@
   -ms-overflow-style: none;
   cursor: grab;
   user-select: none;
-  /* 确保元素可以接收鼠标事件 */
-  pointer-events: auto;
-  /* 防止子元素阻挡事件 */
-  position: relative;
   /* 强制设置最小高度和宽度 */
   min-height: 50px;
   width: 100%;
-  /* 确保内容不会换行 */
-  white-space: nowrap;
 }
 
 .daily-changes-list::-webkit-scrollbar {
@@ -438,8 +473,8 @@
   border-radius: 6px;
   min-width: 80px; /* 增加最小宽度，确保更容易触发滚动 */
   flex: 0 0 auto; /* 改为不伸缩，保持固定宽度 */
-  /* 允许子元素接收事件，但不阻挡父元素的拖拽 */
-  pointer-events: auto;
+  /* 子元素不阻挡父元素的拖拽 */
+  pointer-events: none;
 }
 
 .daily-change-item .date {

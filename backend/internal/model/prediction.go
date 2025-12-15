@@ -31,6 +31,7 @@ type PredictResult struct {
 	Indicators      TechnicalIndicators `json:"indicators"`       // 技术指标
 	Signals         []Signal            `json:"signals"`          // 技术信号
 	Analysis        string              `json:"analysis"`         // AI分析
+	NewsAnalysis    string              `json:"news_analysis"`    // 消息面分析
 	MLPredictions   MLPredictions       `json:"ml_predictions"`   // ML模型预测
 	DailyChanges    []DailyChange       `json:"daily_changes"`    // 近期每日涨跌幅
 }

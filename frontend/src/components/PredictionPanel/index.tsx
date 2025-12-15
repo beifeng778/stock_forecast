@@ -41,60 +41,64 @@ const useDragScroll = (uniqueId?: string) => {
   const isDragging = useRef(false);
   const startX = useRef(0);
   const scrollLeft = useRef(0);
+  const hasMoved = useRef(false);
 
   useEffect(() => {
     const element = elementRef.current;
     if (!element) {
-      console.log('Element not found for drag scroll', uniqueId);
       return;
     }
 
     // 确保元素有正确的样式
     element.style.cursor = 'grab';
     element.style.userSelect = 'none';
+    element.style.overflowX = 'auto';
+    element.style.scrollbarWidth = 'none';
 
     const handleMouseDown = (e: MouseEvent) => {
-      // 确保事件是在当前元素上触发的
-      if (!element.contains(e.target as Node)) {
+      console.log(`[${uniqueId}] MouseDown triggered, scrollWidth: ${element.scrollWidth}, clientWidth: ${element.clientWidth}`);
+
+      // 检查是否可以滚动
+      if (element.scrollWidth <= element.clientWidth) {
+        console.log(`[${uniqueId}] No scroll needed, skipping drag`);
         return;
       }
 
+      console.log(`[${uniqueId}] Starting drag`);
+      // 直接开始拖拽，不做复杂的事件检查
       isDragging.current = true;
+      hasMoved.current = false;
       startX.current = e.pageX;
       scrollLeft.current = element.scrollLeft;
       element.style.cursor = 'grabbing';
       e.preventDefault();
       e.stopPropagation();
-
-      console.log(`[${uniqueId}] Mouse down on drag scroll element:`, element.className, 'scrollLeft:', element.scrollLeft, 'target:', (e.target as HTMLElement)?.className);
     };
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
+
       e.preventDefault();
-      e.stopPropagation();
+      hasMoved.current = true;
 
       const x = e.pageX;
-      const walk = (x - startX.current) * 1.5; // 调整滚动速度
+      const walk = (x - startX.current) * 2; // 增加滚动速度
       const newScrollLeft = scrollLeft.current - walk;
 
       // 确保滚动值在有效范围内
-      element.scrollLeft = Math.max(0, Math.min(newScrollLeft, element.scrollWidth - element.clientWidth));
-
-      console.log(`[${uniqueId}] Dragging, scrollLeft:`, element.scrollLeft, 'walk:', walk);
+      const maxScroll = element.scrollWidth - element.clientWidth;
+      element.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxScroll));
     };
 
-    const handleMouseUp = (e: MouseEvent) => {
+    const handleMouseUp = () => {
       if (isDragging.current) {
-        console.log(`[${uniqueId}] Mouse up, stopping drag`);
         isDragging.current = false;
         element.style.cursor = 'grab';
       }
     };
 
-    const handleMouseLeave = (e: MouseEvent) => {
+    const handleMouseLeave = () => {
       if (isDragging.current) {
-        console.log(`[${uniqueId}] Mouse leave, stopping drag`);
         isDragging.current = false;
         element.style.cursor = 'grab';
       }
@@ -104,36 +108,50 @@ const useDragScroll = (uniqueId?: string) => {
     const handleSelectStart = (e: Event) => {
       if (isDragging.current) {
         e.preventDefault();
-        e.stopPropagation();
       }
     };
 
     // 阻止拖拽时的默认拖拽行为
     const handleDragStart = (e: DragEvent) => {
       e.preventDefault();
-      e.stopPropagation();
     };
 
-    // 使用 { passive: false } 确保可以调用 preventDefault
-    element.addEventListener('mousedown', handleMouseDown, { passive: false });
-    document.addEventListener('mousemove', handleMouseMove, { passive: false });
-    document.addEventListener('mouseup', handleMouseUp, { passive: false });
-    element.addEventListener('mouseleave', handleMouseLeave, { passive: false });
-    element.addEventListener('selectstart', handleSelectStart, { passive: false });
-    element.addEventListener('dragstart', handleDragStart, { passive: false });
+    // 点击事件处理，防止拖拽后触发点击
+    const handleClick = (e: MouseEvent) => {
+      if (hasMoved.current) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
 
-    console.log(`[${uniqueId}] Drag scroll listeners added to:`, element.className, 'scrollWidth:', element.scrollWidth, 'clientWidth:', element.clientWidth, 'canScroll:', element.scrollWidth > element.clientWidth);
+    // 添加滚轮支持
+    const handleWheel = (e: WheelEvent) => {
+      if (element.scrollWidth > element.clientWidth) {
+        e.preventDefault();
+        element.scrollLeft += e.deltaY;
+      }
+    };
+
+    element.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    element.addEventListener('mouseleave', handleMouseLeave);
+    element.addEventListener('selectstart', handleSelectStart);
+    element.addEventListener('dragstart', handleDragStart);
+    element.addEventListener('click', handleClick, true);
+    element.addEventListener('wheel', handleWheel, { passive: false });
 
     return () => {
-      console.log(`[${uniqueId}] Cleaning up drag scroll listeners for:`, element.className);
       element.removeEventListener('mousedown', handleMouseDown);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       element.removeEventListener('mouseleave', handleMouseLeave);
       element.removeEventListener('selectstart', handleSelectStart);
       element.removeEventListener('dragstart', handleDragStart);
+      element.removeEventListener('click', handleClick, true);
+      element.removeEventListener('wheel', handleWheel);
     };
-  }, [uniqueId]); // 添加 uniqueId 作为依赖
+  }, [uniqueId]);
 
   return elementRef;
 };
@@ -244,6 +262,12 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                     <ReactMarkdown>{result.analysis}</ReactMarkdown>
                   </div>
 
+                  {result.news_analysis && (
+                    <div className="news-analysis-content">
+                      <ReactMarkdown>{result.news_analysis}</ReactMarkdown>
+                    </div>
+                  )}
+
                   <div className="ml-predictions-table-wrapper">
                     <table className="ml-predictions-table">
                       <tbody>
@@ -329,7 +353,6 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                           <div
                             className="daily-changes-list"
                             ref={dailyChangesRef}
-                            onClick={() => console.log(`Daily changes list clicked for ${result.stock_code}`)}
                           >
                             {last5Days.map((item, index) => (
                               <div key={index} className="daily-change-item">

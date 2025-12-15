@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -111,10 +112,13 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		news[i] = langchain.NewsItem{Title: n.Title, Time: n.Time, Source: n.Source}
 	}
 
-	// 6. 基于技术指标生成简化的ML预测（不再依赖Python服务）
+	// 6. 分析新闻对股价的量化影响
+	newsImpact := langchain.AnalyzeNewsImpact(code, stockName, news)
+
+	// 7. 基于技术指标生成简化的ML预测（不再依赖Python服务）
 	mlPredictions := generateMLPredictions(indicators)
 
-	// 7. 使用LangChain进行综合分析（包含新闻）
+	// 8. 使用LangChain进行综合分析（包含新闻）
 	analysis, err := langchain.AnalyzeStock(code, stockName, techIndicators, mlPredictions, signals, news)
 	if err != nil {
 		analysis = "AI分析暂时不可用"
@@ -123,11 +127,14 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		analysis = "盘中未收盘（已实时刷新第三方日K）：\n\n" + analysis
 	}
 
-	// 8. 综合判断趋势
-	trend, trendCN, confidence := determineTrend(mlPredictions, signals)
+	// 8.1. 生成专门的消息面分析
+	newsAnalysis := generateNewsAnalysis(newsImpact, news)
 
-	// 9. 计算目标价位
-	targetPrices := calculateTargetPrices(indicators.CurrentPrice, trend, confidence)
+	// 9. 综合判断趋势（融入新闻影响）
+	trend, trendCN, confidence := determineTrendWithNews(mlPredictions, signals, newsImpact)
+
+	// 10. 计算目标价位（考虑新闻影响）
+	targetPrices := calculateTargetPricesWithNews(indicators.CurrentPrice, trend, confidence, newsImpact)
 
 	// 10. 获取近期每日涨跌幅
 	dailyChanges := getDailyChanges(code, 10)
@@ -152,6 +159,7 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		Indicators:      techIndicators,
 		Signals:         signals,
 		Analysis:        analysis,
+		NewsAnalysis:    newsAnalysis,
 		MLPredictions:   mlPredictions,
 		DailyChanges:    dailyChanges,
 	}, nil
@@ -207,18 +215,30 @@ func generateMLPredictions(ind *stockdata.Indicators) model.MLPredictions {
 	strongMomentum := ind.Change5D > 5 || ind.MA5Slope > 1 // 5日涨幅>5% 或 MA5斜率>1%
 	weakMomentum := ind.Change5D < -5 || ind.MA5Slope < -1
 
-	if (maAligned && priceAboveMA) || strongMomentum {
+	// 超强动量检测（针对摩尔线程这种强势股）
+	superStrongMomentum := ind.Change5D > 15 || ind.MomentumScore > 80
+	superWeakMomentum := ind.Change5D < -15 || ind.MomentumScore < 20
+
+	if superStrongMomentum || (maAligned && priceAboveMA && strongMomentum) {
+		maTrend = "up"
+		if superStrongMomentum {
+			maConfidence = 0.95 // 超强势股，高置信度
+		} else {
+			maConfidence = 0.85 // 强势股
+		}
+	} else if (maAligned && priceAboveMA) || strongMomentum {
 		maTrend = "up"
 		maConfidence = 0.7
-		if strongMomentum && maAligned {
-			maConfidence = 0.85 // 强势股
+	} else if superWeakMomentum || (maBearish && priceBelowMA && weakMomentum) {
+		maTrend = "down"
+		if superWeakMomentum {
+			maConfidence = 0.95
+		} else {
+			maConfidence = 0.85
 		}
 	} else if (maBearish && priceBelowMA) || weakMomentum {
 		maTrend = "down"
 		maConfidence = 0.7
-		if weakMomentum && maBearish {
-			maConfidence = 0.85
-		}
 	}
 
 	// 2. 基于MACD判断趋势（Prophet模型）
@@ -265,26 +285,52 @@ func generateMLPredictions(ind *stockdata.Indicators) model.MLPredictions {
 		rsiConfidence = 0.6
 	}
 
-	// 计算预测价格
+	// 计算预测价格（动态调整预测幅度）
+	// 基础预测系数
+	baseFactor := 0.05 // 提高基础预测幅度从2%到5%
+
+	// 根据动量评分调整预测幅度
+	momentumMultiplier := 1.0
+	if ind.MomentumScore > 80 {
+		momentumMultiplier = 3.0 // 超强势股，预测幅度放大3倍
+	} else if ind.MomentumScore > 70 {
+		momentumMultiplier = 2.5 // 强势股，预测幅度放大2.5倍
+	} else if ind.MomentumScore > 60 {
+		momentumMultiplier = 2.0 // 偏强势股，预测幅度放大2倍
+	} else if ind.MomentumScore > 50 {
+		momentumMultiplier = 1.5 // 略强势股，预测幅度放大1.5倍
+	}
+
+	// 根据波动率调整预测幅度
+	volatilityMultiplier := 1.0
+	if ind.Volatility > 0.08 {
+		volatilityMultiplier = 2.0 // 高波动股票，预测幅度放大
+	} else if ind.Volatility > 0.05 {
+		volatilityMultiplier = 1.5
+	}
+
+	// 综合调整系数
+	adjustedFactor := baseFactor * momentumMultiplier * volatilityMultiplier
+
 	maPrice := ind.CurrentPrice
 	if maTrend == "up" {
-		maPrice = ind.CurrentPrice * (1 + 0.02*maConfidence)
+		maPrice = ind.CurrentPrice * (1 + adjustedFactor*maConfidence)
 	} else if maTrend == "down" {
-		maPrice = ind.CurrentPrice * (1 - 0.02*maConfidence)
+		maPrice = ind.CurrentPrice * (1 - adjustedFactor*maConfidence)
 	}
 
 	macdPrice := ind.CurrentPrice
 	if macdTrend == "up" {
-		macdPrice = ind.CurrentPrice * (1 + 0.015*macdConfidence)
+		macdPrice = ind.CurrentPrice * (1 + adjustedFactor*0.8*macdConfidence)
 	} else if macdTrend == "down" {
-		macdPrice = ind.CurrentPrice * (1 - 0.015*macdConfidence)
+		macdPrice = ind.CurrentPrice * (1 - adjustedFactor*0.8*macdConfidence)
 	}
 
 	rsiPrice := ind.CurrentPrice
 	if rsiTrend == "up" {
-		rsiPrice = ind.CurrentPrice * (1 + 0.025*rsiConfidence)
+		rsiPrice = ind.CurrentPrice * (1 + adjustedFactor*1.2*rsiConfidence)
 	} else if rsiTrend == "down" {
-		rsiPrice = ind.CurrentPrice * (1 - 0.025*rsiConfidence)
+		rsiPrice = ind.CurrentPrice * (1 - adjustedFactor*1.2*rsiConfidence)
 	}
 
 	return model.MLPredictions{
@@ -306,13 +352,107 @@ func generateMLPredictions(ind *stockdata.Indicators) model.MLPredictions {
 	}
 }
 
-// determineTrend 综合判断趋势（改进版）
+// determineTrendWithNews 综合判断趋势（融入新闻影响和市场环境感知）
+func determineTrendWithNews(ml model.MLPredictions, signals []model.Signal, newsImpact langchain.NewsImpact) (string, string, float64) {
+	// 先调用原有的趋势判断逻辑
+	baseTrend, baseTrendCN, baseConfidence := determineTrend(ml, signals)
+
+	// 如果没有新闻影响，直接返回基础判断
+	if newsImpact.ImportanceLevel <= 1 && newsImpact.SentimentScore == 0 {
+		return baseTrend, baseTrendCN, baseConfidence
+	}
+
+	// 计算新闻影响权重（基于重要性等级）
+	newsWeight := float64(newsImpact.ImportanceLevel) * 0.15 // 最高权重0.75
+
+	// 根据新闻情感调整趋势和置信度
+	adjustedConfidence := baseConfidence
+	finalTrend := baseTrend
+	finalTrendCN := baseTrendCN
+
+	// 强烈利好新闻可能改变趋势判断
+	if newsImpact.SentimentScore > 0.6 && newsImpact.ImportanceLevel >= 4 {
+		if baseTrend == "down" {
+			// 强利好可能扭转看跌趋势为震荡
+			finalTrend = "sideways"
+			finalTrendCN = "震荡"
+			adjustedConfidence = baseConfidence * 0.7 // 降低原趋势置信度
+		} else if baseTrend == "sideways" {
+			// 强利好可能将震荡转为看涨
+			finalTrend = "up"
+			finalTrendCN = "看涨"
+			adjustedConfidence = baseConfidence + newsWeight
+		} else {
+			// 强化看涨趋势
+			adjustedConfidence = baseConfidence + newsWeight
+		}
+	} else if newsImpact.SentimentScore < -0.6 && newsImpact.ImportanceLevel >= 4 {
+		// 强烈利空新闻
+		if baseTrend == "up" {
+			finalTrend = "sideways"
+			finalTrendCN = "震荡"
+			adjustedConfidence = baseConfidence * 0.7
+		} else if baseTrend == "sideways" {
+			finalTrend = "down"
+			finalTrendCN = "看跌"
+			adjustedConfidence = baseConfidence + newsWeight
+		} else {
+			adjustedConfidence = baseConfidence + newsWeight
+		}
+	} else {
+		// 一般性新闻影响：调整置信度
+		sentimentAdjustment := newsImpact.SentimentScore * newsWeight
+		if (baseTrend == "up" && newsImpact.SentimentScore > 0) ||
+		   (baseTrend == "down" && newsImpact.SentimentScore < 0) {
+			// 新闻与技术面同向，增强置信度
+			adjustedConfidence += math.Abs(sentimentAdjustment)
+		} else if (baseTrend == "up" && newsImpact.SentimentScore < 0) ||
+				  (baseTrend == "down" && newsImpact.SentimentScore > 0) {
+			// 新闻与技术面反向，降低置信度
+			adjustedConfidence -= math.Abs(sentimentAdjustment)
+		}
+	}
+
+	// 确保置信度在合理范围内
+	if adjustedConfidence > 1.0 {
+		adjustedConfidence = 1.0
+	} else if adjustedConfidence < 0.1 {
+		adjustedConfidence = 0.1
+	}
+
+	return finalTrend, finalTrendCN, adjustedConfidence
+}
+
+// determineTrend 综合判断趋势（融入市场环境感知）
 func determineTrend(ml model.MLPredictions, signals []model.Signal) (string, string, float64) {
 	bullishCount := 0
 	bearishCount := 0
 	totalConfidence := 0.0
 	weightedBullish := 0.0
 	weightedBearish := 0.0
+
+	// 提取市场环境信息
+	var marketTrend string
+	var volatility float64
+
+	for _, s := range signals {
+		if s.Name == "市场" {
+			if s.Type == "bullish" {
+				marketTrend = "bull"
+			} else if s.Type == "bearish" {
+				marketTrend = "bear"
+			} else {
+				marketTrend = "sideways"
+			}
+		}
+		if s.Name == "波动" && s.Desc == "高波动" {
+			volatility = 0.06 // 高波动
+		} else if s.Name == "波动" && s.Desc == "低波动" {
+			volatility = 0.015 // 低波动
+		} else {
+			volatility = 0.03 // 正常波动
+		}
+	}
 
 	// 统计ML模型投票（带权重）
 	models := []model.MLPrediction{ml.LSTM, ml.Prophet, ml.XGBoost}
@@ -327,27 +467,121 @@ func determineTrend(ml model.MLPredictions, signals []model.Signal) (string, str
 		totalConfidence += m.Confidence
 	}
 
-	// 统计技术信号投票（权重0.5）
+	// 统计技术信号投票（根据信号类型调整权重）
 	for _, s := range signals {
+		weight := 0.5 // 默认权重
+
+		// 突破信号权重最高（新增）
+		if s.Name == "突破" && (s.Desc == "布林上轨突破" || s.Desc == "布林下轨突破") {
+			weight = 1.0 // 突破信号权重最高
+		} else if s.Name == "突破" && (s.Desc == "布林上轨触及" || s.Desc == "布林下轨触及") {
+			weight = 0.8
+		}
+		// 动量信号权重很高（新增）
+		if s.Name == "动量" && (s.Desc == "强势(80分)" || s.Desc == "强势(90分)" || s.Desc == "强势(100分)") {
+			weight = 0.9 // 强势动量权重很高
+		} else if s.Name == "动量" && s.Type == "bullish" {
+			weight = 0.7
+		}
+		// 量价背离信号权重更高
+		if s.Name == "量价" && (s.Desc == "顶背离" || s.Desc == "底背离") {
+			weight = 0.8
+		}
+		// 市场环境信号权重较高
+		if s.Name == "市场" {
+			weight = 0.7
+		}
+
 		if s.Type == "bullish" {
 			bullishCount++
-			weightedBullish += 0.5
+			weightedBullish += weight
 		} else if s.Type == "bearish" {
 			bearishCount++
-			weightedBearish += 0.5
+			weightedBearish += weight
 		}
 	}
 
-	// 计算平均置信度
+	// 计算基础置信度
 	avgConfidence := totalConfidence / 3
 
-	// 判断趋势（放宽条件：差1票即可，或加权分数差距明显）
+	// 根据市场环境调整置信度
+	adjustedConfidence := adjustConfidenceByMarket(avgConfidence, marketTrend, volatility)
+
+	// 判断趋势（考虑市场环境）
+	var finalTrend string
+	var finalTrendCN string
+
 	if bullishCount > bearishCount || weightedBullish > weightedBearish+0.3 {
-		return "up", "看涨", avgConfidence
+		finalTrend = "up"
+		finalTrendCN = "看涨"
+
+		// 熊市中的看涨信号需要更强的确认
+		if marketTrend == "bear" {
+			adjustedConfidence *= 0.7
+			if adjustedConfidence < 0.6 {
+				finalTrend = "sideways"
+				finalTrendCN = "震荡"
+			}
+		}
 	} else if bearishCount > bullishCount || weightedBearish > weightedBullish+0.3 {
-		return "down", "看跌", avgConfidence
+		finalTrend = "down"
+		finalTrendCN = "看跌"
+
+		// 牛市中的看跌信号需要更强的确认
+		if marketTrend == "bull" {
+			adjustedConfidence *= 0.7
+			if adjustedConfidence < 0.6 {
+				finalTrend = "sideways"
+				finalTrendCN = "震荡"
+			}
+		}
+	} else {
+		finalTrend = "sideways"
+		finalTrendCN = "震荡"
+		adjustedConfidence *= 0.8
 	}
-	return "sideways", "震荡", avgConfidence * 0.8
+
+	return finalTrend, finalTrendCN, adjustedConfidence
+}
+
+// adjustConfidenceByMarket 根据市场环境调整置信度（优化版）
+func adjustConfidenceByMarket(baseConfidence float64, marketTrend string, volatility float64) float64 {
+	adjusted := baseConfidence
+
+	// 重新设计波动率对置信度的影响
+	if volatility > 0.1 {
+		// 极高波动：强势股可能是突破行情，提高置信度
+		if baseConfidence > 0.8 {
+			adjusted *= 1.1 // 强势股在高波动中提高置信度
+		} else {
+			adjusted *= 0.9 // 弱势股在高波动中降低置信度
+		}
+	} else if volatility > 0.05 {
+		// 高波动：根据基础置信度调整
+		if baseConfidence > 0.7 {
+			adjusted *= 1.05 // 较强势股略微提高置信度
+		} else {
+			adjusted *= 0.95 // 较弱势股略微降低置信度
+		}
+	}
+
+	// 市场环境影响
+	if marketTrend == "bull" && baseConfidence > 0.7 {
+		adjusted *= 1.1 // 牛市中的强势信号加强
+	} else if marketTrend == "bear" && baseConfidence < 0.4 {
+		adjusted *= 1.1 // 熊市中的弱势信号加强
+	} else if marketTrend == "sideways" {
+		adjusted *= 0.9 // 震荡市中降低置信度
+	}
+
+	// 确保置信度在合理范围内
+	if adjusted > 1.0 {
+		adjusted = 1.0
+	} else if adjusted < 0.1 {
+		adjusted = 0.1
+	}
+
+	return adjusted
 }
 
 // getDailyChanges 获取近期每日涨跌幅
@@ -386,6 +620,42 @@ func getDailyChanges(code string, days int) []model.DailyChange {
 	return changes
 }
 
+// calculateTargetPricesWithNews 计算目标价位（考虑新闻影响）
+func calculateTargetPricesWithNews(currentPrice float64, trend string, confidence float64, newsImpact langchain.NewsImpact) model.TargetPrices {
+	// 先计算基础目标价位
+	basePrices := calculateTargetPrices(currentPrice, trend, confidence)
+
+	// 如果没有重要新闻影响，直接返回基础价位
+	if newsImpact.ImportanceLevel <= 2 || math.Abs(newsImpact.PriceImpact) < 0.02 {
+		return basePrices
+	}
+
+	// 根据新闻预期价格影响调整目标价位
+	newsAdjustment := 1.0 + newsImpact.PriceImpact
+
+	// 重要性等级越高，影响越大
+	impactMultiplier := 1.0 + float64(newsImpact.ImportanceLevel-2)*0.2 // 等级3=1.2x, 等级4=1.4x, 等级5=1.6x
+
+	// 应用新闻影响调整
+	if newsImpact.PriceImpact > 0 {
+		// 利好新闻：上调目标价位
+		return model.TargetPrices{
+			Short:  basePrices.Short * (newsAdjustment * impactMultiplier),
+			Medium: basePrices.Medium * (newsAdjustment * impactMultiplier),
+			Long:   basePrices.Long * (newsAdjustment * impactMultiplier),
+		}
+	} else if newsImpact.PriceImpact < 0 {
+		// 利空新闻：下调目标价位
+		return model.TargetPrices{
+			Short:  basePrices.Short * (newsAdjustment / impactMultiplier),
+			Medium: basePrices.Medium * (newsAdjustment / impactMultiplier),
+			Long:   basePrices.Long * (newsAdjustment / impactMultiplier),
+		}
+	}
+
+	return basePrices
+}
+
 // calculateTargetPrices 计算目标价位
 func calculateTargetPrices(currentPrice float64, trend string, confidence float64) model.TargetPrices {
 	factor := confidence
@@ -410,4 +680,88 @@ func calculateTargetPrices(currentPrice float64, trend string, confidence float6
 		Medium: currentPrice,
 		Long:   currentPrice * (1 - 0.01*factor),
 	}
+}
+
+// generateNewsAnalysis 生成消息面分析
+func generateNewsAnalysis(newsImpact langchain.NewsImpact, news []langchain.NewsItem) string {
+	if len(news) == 0 {
+		return "**消息面分析**\n\n暂无重要公告或新闻消息。"
+	}
+
+	// 构建消息面分析
+	analysis := "**消息面分析**\n\n"
+
+	// 新闻影响评估
+	if newsImpact.ImportanceLevel > 1 {
+		var sentiment string
+		var impactDesc string
+
+		// 情感倾向描述
+		if newsImpact.SentimentScore > 0.6 {
+			sentiment = "**利好**"
+		} else if newsImpact.SentimentScore > 0.2 {
+			sentiment = "**偏利好**"
+		} else if newsImpact.SentimentScore < -0.6 {
+			sentiment = "**利空**"
+		} else if newsImpact.SentimentScore < -0.2 {
+			sentiment = "**偏利空**"
+		} else {
+			sentiment = "**中性**"
+		}
+
+		// 重要性等级描述
+		switch newsImpact.ImportanceLevel {
+		case 5:
+			impactDesc = "极重要"
+		case 4:
+			impactDesc = "很重要"
+		case 3:
+			impactDesc = "重要"
+		case 2:
+			impactDesc = "较重要"
+		default:
+			impactDesc = "一般"
+		}
+
+		// 预期价格影响
+		priceImpactPercent := newsImpact.PriceImpact * 100
+		var priceImpactDesc string
+		if math.Abs(priceImpactPercent) >= 5 {
+			priceImpactDesc = "显著"
+		} else if math.Abs(priceImpactPercent) >= 2 {
+			priceImpactDesc = "中等"
+		} else {
+			priceImpactDesc = "轻微"
+		}
+
+		analysis += fmt.Sprintf("**影响评估**：%s消息，重要性等级%s，预期对股价产生%s影响（约%.1f%%）\n\n",
+			sentiment, impactDesc, priceImpactDesc, priceImpactPercent)
+	}
+
+	// 最新消息列表
+	analysis += "**最新消息**：\n"
+	for i, n := range news {
+		if i >= 3 { // 只显示前3条
+			break
+		}
+		analysis += fmt.Sprintf("• [%s] %s\n", n.Time, n.Title)
+	}
+
+	// 投资建议
+	if newsImpact.ImportanceLevel >= 3 {
+		analysis += "\n**投资提示**：\n"
+		if newsImpact.SentimentScore > 0.5 {
+			analysis += "• 重要利好消息可能推动股价上涨，建议关注放量突破\n"
+			analysis += "• 注意消息兑现后的获利回吐风险"
+		} else if newsImpact.SentimentScore < -0.5 {
+			analysis += "• 重要利空消息可能施压股价，建议谨慎操作\n"
+			analysis += "• 关注是否出现超跌反弹机会"
+		} else {
+			analysis += "• 消息面影响相对中性，以技术面分析为主"
+		}
+	} else {
+		analysis += "\n**投资提示**：消息面影响有限，建议重点关注技术面信号。"
+	}
+
+	return analysis
 }

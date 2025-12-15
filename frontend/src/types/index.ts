@@ -103,6 +103,7 @@ export interface PredictResult {
   indicators: TechnicalIndicators;
   signals: Signal[];
   analysis: string;
+  news_analysis?: string; // 消息面分析
   ml_predictions: MLPredictions;
   daily_changes?: DailyChange[]; // 近期每日涨跌幅
 }
