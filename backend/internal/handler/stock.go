@@ -2,38 +2,31 @@ package handler
 
 import (
 	"net/http"
+	"os"
 
 	"stock-forecast-backend/internal/stockdata"
 
 	"github.com/gin-gonic/gin"
 )
 
-// GetStocks 获取股票列表
+// GetStocks 获取股票列表（始终从缓存获取）
 func GetStocks(c *gin.Context) {
 	keyword := c.Query("keyword")
-	refresh := c.Query("refresh") == "1"
 
-	stocks, fromCache, refreshFailed := stockdata.SearchStocksWithRefresh(keyword, refresh)
-
-	// 刷新时第三方接口获取失败，返回错误让用户感知
-	if refreshFailed {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "第三方数据接口异常，请稍后再试",
-		})
-		return
-	}
+	// 始终从缓存获取，不再支持前端直接刷新第三方接口
+	stocks, _ := stockdata.SearchStocks(keyword)
 
 	// 获取全量列表时，空结果算错误
 	if keyword == "" && len(stocks) == 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "第三方数据接口异常，请稍后再试",
+			"error": "股票列表为空，请等待后端定时任务更新",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":      stocks,
-		"fromCache": fromCache,
+		"fromCache": true,
 	})
 }
 
@@ -41,15 +34,14 @@ func GetStocks(c *gin.Context) {
 func GetKline(c *gin.Context) {
 	code := c.Param("code")
 	period := c.DefaultQuery("period", "daily")
-	refresh := c.Query("refresh") == "1"
 
-	// 避免浏览器/代理缓存影响盘中刷新
-	// refresh=1 时强制刷新语义更明确；同时对所有请求返回 no-store，防止拿到陈旧数据
+	// 避免浏览器/代理缓存
 	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
 	c.Header("Pragma", "no-cache")
 	c.Header("Expires", "0")
 
-	kline, err := stockdata.GetKlineWithRefresh(code, period, refresh)
+	// 始终从缓存获取数据，不再支持前端直接刷新第三方接口
+	kline, err := stockdata.GetKline(code, period)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -89,5 +81,18 @@ func GetNews(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": news,
+	})
+}
+
+// GetConfig 获取系统配置（前端需要的配置项）
+func GetConfig(c *gin.Context) {
+	// 前端刷新按钮可用时间，默认17:00
+	refreshAvailableTime := os.Getenv("FRONTEND_REFRESH_AVAILABLE_TIME")
+	if refreshAvailableTime == "" {
+		refreshAvailableTime = "17:00"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"refresh_available_time": refreshAvailableTime,
 	})
 }

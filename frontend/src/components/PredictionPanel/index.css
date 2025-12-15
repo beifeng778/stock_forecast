@@ -204,10 +204,16 @@
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  cursor: grab;
+  user-select: none;
 }
 
 .signals-section::-webkit-scrollbar {
   display: none;
+}
+
+.signals-section:active {
+  cursor: grabbing;
 }
 
 .signals-section .ant-tag {
@@ -218,6 +224,8 @@
   border: none;
   white-space: nowrap;
   flex-shrink: 0;
+  /* 允许标签接收事件，但不阻挡父元素的拖拽 */
+  pointer-events: auto;
 }
 
 .analysis-content {
@@ -400,10 +408,25 @@
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  cursor: grab;
+  user-select: none;
+  /* 确保元素可以接收鼠标事件 */
+  pointer-events: auto;
+  /* 防止子元素阻挡事件 */
+  position: relative;
+  /* 强制设置最小高度和宽度 */
+  min-height: 50px;
+  width: 100%;
+  /* 确保内容不会换行 */
+  white-space: nowrap;
 }
 
 .daily-changes-list::-webkit-scrollbar {
   display: none;
+}
+
+.daily-changes-list:active {
+  cursor: grabbing;
 }
 
 .daily-change-item {
@@ -413,8 +436,10 @@
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 6px;
-  min-width: 60px;
-  flex: 1 0 auto;
+  min-width: 80px; /* 增加最小宽度，确保更容易触发滚动 */
+  flex: 0 0 auto; /* 改为不伸缩，保持固定宽度 */
+  /* 允许子元素接收事件，但不阻挡父元素的拖拽 */
+  pointer-events: auto;
 }
 
 .daily-change-item .date {

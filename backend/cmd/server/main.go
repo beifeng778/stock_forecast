@@ -72,6 +72,9 @@ func main() {
 		api.POST("/auth/verify", handler.VerifyInviteCode)
 		api.GET("/auth/check", handler.CheckToken)
 
+		// 系统配置（不需要token）
+		api.GET("/config", handler.GetConfig)
+
 		// 需要认证的路由
 		protected := api.Group("")
 		protected.Use(handler.AuthMiddleware())
@@ -100,6 +103,9 @@ func main() {
 
 	// 启动股票缓存刷新定时任务（每天凌晨4点）
 	scheduler.StartStockCacheRefreshScheduler()
+
+	// 启动收盘后增量更新定时任务（交易日收盘后）
+	scheduler.StartPostMarketUpdateScheduler()
 
 	log.Printf("服务启动在端口 %s", port)
 	if err := r.Run(":" + port); err != nil {

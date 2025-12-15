@@ -66,6 +66,9 @@ func GetKline(code, period string) (*KlineResponse, error) {
 // GetKlineWithRefresh 获取K线数据，forceRefresh=true 时绕过缓存直连第三方
 func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse, error) {
 	key := getKlineCacheKey(code, period)
+
+
+
 	if !forceRefresh {
 		// 1) 内存缓存
 		klineCacheMu.RLock()

@@ -9,12 +9,10 @@ import ReactECharts from "echarts-for-react";
 import { Button, Empty, Select, Space, Spin, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useStockStore } from "../../store";
-import { getKline } from "../../services/api";
+import { getKline, getSystemConfig } from "../../services/api";
 import type { KlineData } from "../../types";
 import "./index.css";
 
-const REFRESH_SUCCESS_COOLDOWN = 5 * 60;
-const REFRESH_FAIL_COOLDOWN = 2 * 60;
 
 // 判断A股是否已收盘（15:00收盘）
 const isMarketClosed = (): boolean => {
@@ -53,74 +51,32 @@ const TrendChart: React.FC = () => {
   const [klineData, setKlineData] = useState<KlineData[]>([]);
   const [stockName, setStockName] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [refreshCooldown, setRefreshCooldown] = useState(0);
-  const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [refreshAvailableTime, setRefreshAvailableTime] = useState<string>("17:00");
 
-  const getCooldownStorageKey = useCallback((code: string) => {
-    return `klineRefreshCooldownEnd:${code}`;
-  }, []);
-
-  const stopCooldownTimer = useCallback(() => {
-    if (cooldownTimerRef.current) {
-      clearInterval(cooldownTimerRef.current);
-      cooldownTimerRef.current = null;
-    }
-  }, []);
-
-  const startCooldown = useCallback(
-    (seconds: number) => {
-      if (!currentStock) return;
-
-      stopCooldownTimer();
-      setRefreshCooldown(seconds);
-
-      const endTime = Date.now() + seconds * 1000;
-      localStorage.setItem(
-        getCooldownStorageKey(currentStock),
-        String(endTime)
-      );
-
-      cooldownTimerRef.current = setInterval(() => {
-        const remaining = Math.ceil((endTime - Date.now()) / 1000);
-        if (remaining <= 0) {
-          stopCooldownTimer();
-          setRefreshCooldown(0);
-          localStorage.removeItem(getCooldownStorageKey(currentStock));
-          return;
+  // 获取系统配置
+  useEffect(() => {
+    getSystemConfig()
+      .then((config) => {
+        if (config.refresh_available_time) {
+          setRefreshAvailableTime(config.refresh_available_time);
         }
-        setRefreshCooldown(remaining);
-      }, 1000);
-    },
-    [currentStock, getCooldownStorageKey, stopCooldownTimer]
-  );
+      })
+      .catch((err) => {
+        console.error("获取系统配置失败:", err);
+      });
+  }, []);
 
-  const canRefreshIntraday = Boolean(currentStock) && isTradingTime();
+  // 判断当前时间是否在刷新可用时间之后
+  const isRefreshTimeAvailable = useCallback((): boolean => {
+    if (!isTradingDay()) return true; // 非交易日始终可用
 
-  // 切换股票时恢复该股票的冷却状态
-  useEffect(() => {
-    stopCooldownTimer();
-    setRefreshCooldown(0);
+    const now = new Date();
+    const [hour, minute] = refreshAvailableTime.split(":").map(Number);
+    const availableTime = hour * 100 + minute;
+    const currentTime = getHHMM(now);
 
-    if (!currentStock) return;
-    const savedEndTime = localStorage.getItem(
-      getCooldownStorageKey(currentStock)
-    );
-    if (!savedEndTime) return;
-
-    const remaining = Math.ceil((Number(savedEndTime) - Date.now()) / 1000);
-    if (remaining > 0) {
-      startCooldown(remaining);
-    } else {
-      localStorage.removeItem(getCooldownStorageKey(currentStock));
-    }
-  }, [currentStock, getCooldownStorageKey, startCooldown, stopCooldownTimer]);
-
-  // 组件卸载时清理定时器
-  useEffect(() => {
-    return () => {
-      stopCooldownTimer();
-    };
-  }, [stopCooldownTimer]);
+    return currentTime >= availableTime;
+  }, [refreshAvailableTime]);
 
   // 当选中股票变化时，自动选择第一只
   useEffect(() => {
@@ -137,7 +93,7 @@ const TrendChart: React.FC = () => {
   }, [selectedStocks, currentStock]);
 
   const loadData = useCallback(
-    async (showToast: boolean, refresh: boolean): Promise<boolean> => {
+    async (showToast: boolean): Promise<boolean> => {
       if (!currentStock) {
         setKlineData([]);
         return false;
@@ -145,11 +101,11 @@ const TrendChart: React.FC = () => {
 
       setLoading(true);
       try {
-        const kline = await getKline(currentStock, "daily", refresh);
+        const kline = await getKline(currentStock, "daily");
         setKlineData(kline.data || []);
         setStockName(kline.name || "");
         if (showToast) {
-          message.success("盘中数据已刷新");
+          message.success("数据已刷新");
         }
         return true;
       } catch (error) {
@@ -168,28 +124,18 @@ const TrendChart: React.FC = () => {
 
   // 加载K线数据
   useEffect(() => {
-    loadData(false, false);
+    loadData(false);
   }, [currentStock, loadData]);
 
-  const formatCooldown = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${String(s).padStart(2, "0")}`;
-  };
+  const canRefresh = Boolean(currentStock) && isRefreshTimeAvailable();
+  const refreshDisabled = !canRefresh || loading;
+  const refreshTooltipTitle = !canRefresh
+    ? `当日数据将在 ${refreshAvailableTime} 后可刷新（需等待第三方接口更新后，后台同步数据）`
+    : "刷新当日K线数据（从缓存获取）";
 
-  const refreshDisabled = !canRefreshIntraday || loading || refreshCooldown > 0;
-  const refreshButtonText =
-    refreshCooldown > 0 ? formatCooldown(refreshCooldown) : "刷新盘中";
-  const refreshTooltipTitle = !canRefreshIntraday
-    ? "仅交易日 09:30-11:30 / 13:00-15:00 可刷新"
-    : refreshCooldown > 0
-    ? `冷却中 ${formatCooldown(refreshCooldown)}（失败后2分钟，成功后5分钟）`
-    : "刷新盘中数据（会请求第三方接口）";
-
-  const handleRefreshIntraday = async () => {
+  const handleRefresh = async () => {
     if (refreshDisabled) return;
-    const ok = await loadData(true, true);
-    startCooldown(ok ? REFRESH_SUCCESS_COOLDOWN : REFRESH_FAIL_COOLDOWN);
+    await loadData(true);
   };
 
   // 预测K线数据类型
@@ -381,8 +327,8 @@ const TrendChart: React.FC = () => {
     }
   }, [predictionData, currentStock, setPredictionKlines]);
 
-  // 生成图表配置
-  const getOption = () => {
+  // 生成图表配置 - 使用useMemo避免频繁重新生成导致tooltip闪烁
+  const chartOption = useMemo(() => {
     if (klineData.length === 0) {
       return {};
     }
@@ -506,6 +452,43 @@ const TrendChart: React.FC = () => {
         textStyle: {
           color: "#e2e8f0",
         },
+        hideDelay: 200, // 减少延迟时间，让tooltip更快响应
+        showDelay: 0, // 鼠标移入后立即显示
+        enterable: false, // 禁止鼠标进入tooltip区域，让它纯粹跟随鼠标
+        confine: true, // 限制tooltip在图表区域内
+        transitionDuration: 0.1, // 减少过渡时间，让移动更流畅
+        alwaysShowContent: false, // 确保不会一直显示
+        triggerOn: 'mousemove', // 只使用mousemove触发
+        appendToBody: false, // 不添加到body，避免定位问题
+        renderMode: 'html', // 使用HTML渲染模式，提升性能
+        position: function (point: number[], params: any, dom: HTMLElement, rect: any, size: any) {
+          // 简化定位逻辑，让tooltip流畅跟随鼠标
+          const [x, y] = point;
+          const tooltipWidth = size.contentSize[0];
+          const tooltipHeight = size.contentSize[1];
+          const chartWidth = size.viewSize[0];
+          const chartHeight = size.viewSize[1];
+
+          // 基础偏移量
+          const offsetX = 10;
+          const offsetY = -10;
+
+          let posX = x + offsetX;
+          let posY = y + offsetY;
+
+          // 简单的边界检查
+          if (posX + tooltipWidth > chartWidth - 10) {
+            posX = x - tooltipWidth - offsetX;
+          }
+
+          if (posY < 10) {
+            posY = y + 20;
+          } else if (posY + tooltipHeight > chartHeight - 10) {
+            posY = y - tooltipHeight - 20;
+          }
+
+          return [posX, posY];
+        },
         formatter: (params: any) => {
           const idx = params[0]?.dataIndex;
           if (idx < klineData.length) {
@@ -526,6 +509,7 @@ const TrendChart: React.FC = () => {
             const hasActualHigh = isToday && isValidNumber(data.high);
             const hasActualLow = isToday && isValidNumber(data.low);
             const hasActualVolume = isToday && isValidVolume(data.volume);
+
             const hasTodayActual =
               hasActualOpen ||
               hasActualClose ||
@@ -785,7 +769,7 @@ const TrendChart: React.FC = () => {
       ],
       series,
     };
-  };
+  }, [klineData, predictionData, currentStock, stockName, predictions]);
 
   const stockOptions = selectedStocks.map((s) => ({
     value: s.code,
@@ -815,10 +799,10 @@ const TrendChart: React.FC = () => {
             <Button
               size="small"
               icon={<ReloadOutlined />}
-              onClick={handleRefreshIntraday}
+              onClick={handleRefresh}
               disabled={refreshDisabled}
             >
-              {refreshButtonText}
+              刷新
             </Button>
           </Tooltip>
         </Space>
@@ -835,9 +819,16 @@ const TrendChart: React.FC = () => {
           <Empty description="请选择股票查看趋势" />
         ) : (
           <ReactECharts
-            option={getOption()}
+            option={chartOption}
             style={{ height: "100%", width: "100%" }}
             notMerge={true}
+            shouldSetOption={(prevProps: any, nextProps: any) => {
+              // 只有在关键数据变化时才重新设置option，避免倒计时更新导致的闪烁
+              return (
+                prevProps.option !== nextProps.option ||
+                JSON.stringify(prevProps.option) !== JSON.stringify(nextProps.option)
+              );
+            }}
           />
         )}
       </div>

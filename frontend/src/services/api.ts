@@ -38,13 +38,10 @@ api.interceptors.response.use(
   }
 );
 
-// 获取股票列表
-export async function getStocks(
-  keyword?: string,
-  refresh?: boolean
-): Promise<Stock[]> {
+// 获取股票列表（始终从缓存获取）
+export async function getStocks(keyword?: string): Promise<Stock[]> {
   const response = await api.get("/stocks", {
-    params: { keyword, refresh: refresh ? "1" : undefined },
+    params: { keyword },
   });
   return response.data.data || [];
 }
@@ -52,15 +49,13 @@ export async function getStocks(
 // 获取K线数据
 export async function getKline(
   code: string,
-  period: string = "daily",
-  refresh?: boolean
+  period: string = "daily"
 ): Promise<KlineResponse> {
   const response = await api.get(`/stocks/${code}/kline`, {
     params: {
       period,
-      refresh: refresh ? "1" : undefined,
-      // 避免浏览器/中间层缓存
-      t: refresh ? Date.now() : undefined,
+      // 添加时间戳避免浏览器缓存
+      t: Date.now(),
     },
   });
   return response.data;
@@ -96,6 +91,17 @@ export async function checkToken(): Promise<{
   message: string;
 }> {
   const response = await api.get("/auth/check");
+  return response.data;
+}
+
+// 系统配置响应类型
+export interface SystemConfig {
+  refresh_available_time: string; // 格式：HH:MM
+}
+
+// 获取系统配置
+export async function getSystemConfig(): Promise<SystemConfig> {
+  const response = await api.get("/config");
   return response.data;
 }
 

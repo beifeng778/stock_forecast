@@ -33,6 +33,7 @@ interface StockStore {
   setSelectedStocks: (stocks: Stock[]) => void;
   addStock: (stock: Stock) => void;
   removeStock: (code: string) => void;
+  removeStockWithData: (code: string) => void; // 删除股票及其相关数据
   clearStocks: () => void;
   updateStockNames: (stockMap: Map<string, Stock>) => void;
 
@@ -89,6 +90,35 @@ export const useStockStore = create<StockStore>()(
       removeStock: (code) => {
         const { selectedStocks } = get();
         set({ selectedStocks: selectedStocks.filter((s) => s.code !== code) });
+      },
+      removeStockWithData: (code) => {
+        const { selectedStocks, predictions, predictionKlines, tradeFormData } = get();
+
+        // 移除股票
+        const updatedStocks = selectedStocks.filter((s) => s.code !== code);
+
+        // 移除对应的预测结果
+        const updatedPredictions = predictions.filter((p) => p.stock_code !== code);
+        const updatedPredictedCodes = updatedPredictions.map((p) => p.stock_code);
+
+        // 移除对应的预测K线数据
+        const updatedPredictionKlines = { ...predictionKlines };
+        delete updatedPredictionKlines[code];
+
+        // 如果交易模拟中选择的是被删除的股票，清空交易数据
+        const shouldClearTradeData = tradeFormData.stock_code === code;
+
+        set({
+          selectedStocks: updatedStocks,
+          predictions: updatedPredictions,
+          predictedCodes: updatedPredictedCodes,
+          predictionKlines: updatedPredictionKlines,
+          ...(shouldClearTradeData && {
+            tradeFormData: { quantity: 100 },
+            tradeResult: null,
+            tradeHasFutureDate: false,
+          }),
+        });
       },
       clearStocks: () => set({ selectedStocks: [] }),
       updateStockNames: (stockMap) => {

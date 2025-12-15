@@ -19,15 +19,11 @@ import { getStocks, predict, validateBeforeAction } from "../../services/api";
 import type { Stock } from "../../types";
 import "./index.css";
 
-const REFRESH_COOLDOWN = 5 * 60; // 5分钟冷却时间（秒）
-
 const StockSelector: React.FC = () => {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [allStocks, setAllStocks] = useState<Stock[]>([]);
   const [searching, setSearching] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [cooldown, setCooldown] = useState(0); // 刷新冷却倒计时
-  const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const stockListRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false); // 输入法组合状态
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -59,6 +55,7 @@ const StockSelector: React.FC = () => {
     selectedStocks,
     addStock,
     removeStock,
+    removeStockWithData,
     period,
     setPredictions,
     setLoading,
@@ -69,84 +66,35 @@ const StockSelector: React.FC = () => {
     updateStockNames,
   } = useStockStore();
 
-  // 开始冷却倒计时
-  const startCooldown = useCallback((seconds: number = REFRESH_COOLDOWN) => {
-    setCooldown(seconds);
-    // 保存冷却结束时间到localStorage
-    const endTime = Date.now() + seconds * 1000;
-    localStorage.setItem("stockRefreshCooldownEnd", String(endTime));
 
-    if (cooldownTimer.current) {
-      clearInterval(cooldownTimer.current);
-    }
-    cooldownTimer.current = setInterval(() => {
-      setCooldown((prev) => {
-        if (prev <= 1) {
-          if (cooldownTimer.current) {
-            clearInterval(cooldownTimer.current);
-            cooldownTimer.current = null;
-          }
-          localStorage.removeItem("stockRefreshCooldownEnd");
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, []);
-
-  // 页面加载时恢复冷却状态
-  useEffect(() => {
-    const savedEndTime = localStorage.getItem("stockRefreshCooldownEnd");
-    if (savedEndTime) {
-      const remaining = Math.ceil((Number(savedEndTime) - Date.now()) / 1000);
-      if (remaining > 0) {
-        startCooldown(remaining);
-      } else {
-        localStorage.removeItem("stockRefreshCooldownEnd");
-      }
-    }
-  }, [startCooldown]);
-
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      if (cooldownTimer.current) {
-        clearInterval(cooldownTimer.current);
-      }
-    };
-  }, []);
-
-  // 加载股票列表（支持强制刷新）
+  // 加载股票列表（始终从缓存获取）
   const loadStockList = useCallback(
-    async (forceRefresh = false) => {
+    async (showToast = false) => {
       setInitialLoading(true);
       try {
-        const result = await getStocks("", forceRefresh);
+        const result = await getStocks("");
         setAllStocks(result || []);
         // 同步更新已选择股票和预测结果中的名称
         if (result && result.length > 0) {
           const stockMap = new Map(result.map((s) => [s.code, s]));
           updateStockNames(stockMap);
         }
-        if (forceRefresh) {
-          message.success("股票列表已增量更新");
-          startCooldown(); // 刷新后开始冷却
+        if (showToast) {
+          message.success("股票列表已刷新");
         }
       } catch (error: unknown) {
-        // 401错误会触发页面刷新，不需要显示错误提示和倒计时
+        // 401错误会触发页面刷新，不需要显示错误提示
         const axiosError = error as { response?: { status?: number } };
         if (axiosError.response?.status === 401) {
           return;
         }
         console.error("加载股票列表失败:", error);
-        message.error("第三方数据接口异常，请稍后再试");
-        // 失败时启动2分钟倒计时
-        startCooldown(120);
+        message.error("加载股票列表失败，请稍后再试");
       } finally {
         setInitialLoading(false);
       }
     },
-    [startCooldown, updateStockNames]
+    [updateStockNames]
   );
 
   // 组件挂载时加载股票列表
@@ -232,10 +180,27 @@ const StockSelector: React.FC = () => {
     }
   };
 
-  // 移除股票时清空交易数据
-  const handleRemoveStock = (code: string) => {
-    removeStock(code);
-    clearTradeData();
+  // 移除股票（带二次确认）
+  const handleRemoveStock = async (code: string) => {
+    // 先验证token
+    const valid = await validateBeforeAction();
+    if (!valid) return;
+
+    // 找到要删除的股票信息
+    const stock = selectedStocks.find(s => s.code === code);
+    const stockName = stock ? `${stock.code} ${stock.name}` : code;
+
+    Modal.confirm({
+      title: "确认删除股票",
+      content: `确定要删除股票 "${stockName}" 吗？这将同时清除该股票的预测结果和相关的委托模拟数据。`,
+      okText: "确定删除",
+      cancelText: "取消",
+      okButtonProps: { danger: true },
+      onOk: () => {
+        removeStockWithData(code);
+        message.success(`已删除股票 "${stockName}" 及其相关数据`);
+      },
+    });
   };
 
   // 清空所有股票（二次确认，需要验证token）
@@ -266,19 +231,13 @@ const StockSelector: React.FC = () => {
           {!initialLoading && (
             <span className="stock-count">共 {allStocks.length} 只股票</span>
           )}
-          <Tooltip title="数据来自第三方接口，可能存在延迟">
+          <Tooltip title="刷新股票列表（从缓存获取）">
             <Button
               className="refresh-btn"
               icon={<ReloadOutlined spin={initialLoading} />}
               onClick={() => loadStockList(true)}
-              disabled={initialLoading || loading || cooldown > 0}
-            >
-              {cooldown > 0
-                ? `${Math.floor(cooldown / 60)}:${String(
-                    cooldown % 60
-                  ).padStart(2, "0")}`
-                : null}
-            </Button>
+              disabled={initialLoading || loading}
+            />
           </Tooltip>
         </Space>
       </div>
