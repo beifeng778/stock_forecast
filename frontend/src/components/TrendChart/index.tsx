@@ -282,7 +282,7 @@ const TrendChart: React.FC = () => {
         name: "AI预测(5日)",
         type: "line",
         data: predictionPrices,
-        smooth: false,
+        smooth: true,
         symbol: "circle",
         symbolSize: 6,
         lineStyle: {
