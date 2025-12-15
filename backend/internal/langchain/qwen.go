@@ -1,12 +1,17 @@
 package langchain
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"stock-forecast-backend/internal/model"
@@ -15,6 +20,8 @@ import (
 var (
 	dashscopeAPIKey string
 	llmModel        string
+	llmSamplesPath  string
+	llmSamplesTopK  int
 )
 
 func init() {
@@ -23,6 +30,267 @@ func init() {
 	if llmModel == "" {
 		llmModel = "qwen-plus"
 	}
+	llmSamplesPath = os.Getenv("LLM_SAMPLES_PATH")
+	if llmSamplesPath == "" {
+		llmSamplesPath = "data/llm_samples.jsonl"
+	}
+	llmSamplesTopK = 3
+	if v := strings.TrimSpace(os.Getenv("LLM_SAMPLES_TOPK")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 20 {
+			llmSamplesTopK = n
+		}
+	}
+}
+
+type ohlcvLLMResponse struct {
+	AIToday      *model.KlineData  `json:"ai_today"`
+	FutureKlines []model.KlineData `json:"future_klines"`
+	Confidence   float64           `json:"confidence"`
+	Reasons      []string          `json:"reasons"`
+}
+
+type llmSample struct {
+	ID       string `json:"id"`
+	Features struct {
+		RSI           float64 `json:"rsi"`
+		Volatility    float64 `json:"volatility"`
+		Change5D      float64 `json:"change_5d"`
+		MA5Slope      float64 `json:"ma5_slope"`
+		MomentumScore float64 `json:"momentum_score"`
+	} `json:"features"`
+	Outcome struct {
+		Future1D float64 `json:"future_1d"`
+		Future5D float64 `json:"future_5d"`
+	} `json:"outcome"`
+}
+
+func loadLLMSamples(path string) ([]llmSample, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	samples := make([]llmSample, 0, 256)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var s llmSample
+		if err := json.Unmarshal([]byte(line), &s); err != nil {
+			continue
+		}
+		if s.ID == "" {
+			s.ID = fmt.Sprintf("sample_%d", len(samples)+1)
+		}
+		samples = append(samples, s)
+	}
+	if err := scanner.Err(); err != nil {
+		return samples, err
+	}
+	return samples, nil
+}
+
+func sampleDistance(ind model.TechnicalIndicators, s llmSample) float64 {
+	d := 0.0
+	d += math.Abs(ind.RSI-s.Features.RSI) / 100.0 * 2.0
+	d += math.Abs(ind.Volatility-s.Features.Volatility) / 0.10 * 2.0
+	d += math.Abs(ind.Change5D-s.Features.Change5D) / 20.0 * 1.0
+	d += math.Abs(ind.MA5Slope-s.Features.MA5Slope) / 5.0 * 1.0
+	d += math.Abs(ind.MomentumScore-s.Features.MomentumScore) / 100.0 * 1.0
+	return d
+}
+
+func selectTopSamples(ind model.TechnicalIndicators, samples []llmSample, topK int) []llmSample {
+	if topK <= 0 || len(samples) == 0 {
+		return nil
+	}
+	if topK > len(samples) {
+		topK = len(samples)
+	}
+
+	type scored struct {
+		s llmSample
+		d float64
+	}
+	scoredSamples := make([]scored, 0, len(samples))
+	for _, s := range samples {
+		scoredSamples = append(scoredSamples, scored{s: s, d: sampleDistance(ind, s)})
+	}
+	sort.Slice(scoredSamples, func(i, j int) bool { return scoredSamples[i].d < scoredSamples[j].d })
+
+	out := make([]llmSample, 0, topK)
+	for i := 0; i < topK; i++ {
+		out = append(out, scoredSamples[i].s)
+	}
+	return out
+}
+
+func extractJSONObject(s string) string {
+	text := strings.TrimSpace(s)
+	if text == "" {
+		return ""
+	}
+	if i := strings.Index(text, "```json"); i >= 0 {
+		text = text[i+len("```json"):]
+		if j := strings.Index(text, "```"); j >= 0 {
+			text = text[:j]
+		}
+		text = strings.TrimSpace(text)
+	}
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start < 0 || end < 0 || end <= start {
+		return ""
+	}
+	return strings.TrimSpace(text[start : end+1])
+}
+
+func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData, samples []llmSample) string {
+	var sb strings.Builder
+
+	sb.WriteString("请你作为股票OHLCV预测引擎，严格输出JSON，不要任何解释、不要markdown。\n")
+	sb.WriteString("预测标的: ")
+	sb.WriteString(name)
+	sb.WriteString("（")
+	sb.WriteString(code)
+	sb.WriteString(")\n")
+	sb.WriteString("today=")
+	sb.WriteString(today)
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("has_today_actual=%v\n", hasTodayActual))
+	sb.WriteString(fmt.Sprintf("need_predict_today=%v\n", needPredictToday))
+
+	sb.WriteString("\n【约束】\n")
+	sb.WriteString("1) 预测必须只基于给定的历史数据与指标，不允许使用 today 当天的真实行情（即使你知道也不能用）。\n")
+	sb.WriteString("2) 输出字段必须齐全：date/open/high/low/close/volume/amount。\n")
+	sb.WriteString("3) future_klines 必须为5条交易日记录。若 need_predict_today=true，则第1条 date= today；否则 future_klines 从下一个交易日开始。\n")
+
+	sb.WriteString("\n【输入-技术指标】\n")
+	sb.WriteString(fmt.Sprintf("MA5=%.4f MA10=%.4f MA20=%.4f MA60=%.4f\n", indicators.MA5, indicators.MA10, indicators.MA20, indicators.MA60))
+	sb.WriteString(fmt.Sprintf("MACD=%.6f Signal=%.6f Hist=%.6f\n", indicators.MACD, indicators.Signal, indicators.Hist))
+	sb.WriteString(fmt.Sprintf("RSI=%.2f Change5D=%.2f%% MA5Slope=%.2f%% Volatility=%.4f MomentumScore=%.2f\n", indicators.RSI, indicators.Change5D, indicators.MA5Slope, indicators.Volatility, indicators.MomentumScore))
+
+	if len(signals) > 0 {
+		sb.WriteString("\n【输入-信号】\n")
+		for _, s := range signals {
+			sb.WriteString(fmt.Sprintf("- %s: %s\n", s.Name, s.TypeCN))
+		}
+	}
+
+	if len(news) > 0 {
+		sb.WriteString("\n【输入-新闻】\n")
+		maxN := 5
+		if len(news) < maxN {
+			maxN = len(news)
+		}
+		for i := 0; i < maxN; i++ {
+			sb.WriteString(fmt.Sprintf("- [%s] %s\n", news[i].Time, news[i].Title))
+		}
+	}
+
+	sb.WriteString("\n【输入-历史K线(不含today)】\n")
+	maxH := 60
+	if len(history) < maxH {
+		maxH = len(history)
+	}
+	start := len(history) - maxH
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(history); i++ {
+		d := history[i]
+		sb.WriteString(fmt.Sprintf("%s,%.4f,%.4f,%.4f,%.4f,%.0f,%.0f\n", d.Date, d.Open, d.High, d.Low, d.Close, d.Volume, d.Amount))
+	}
+
+	if len(samples) > 0 {
+		sb.WriteString("\n【相似历史样本(用于蒸馏对齐)】\n")
+		for _, s := range samples {
+			sb.WriteString(fmt.Sprintf("sample_id=%s rsi=%.2f vol=%.4f chg5d=%.2f ma5slope=%.2f mom=%.2f -> future1d=%.2f%% future5d=%.2f%%\n", s.ID, s.Features.RSI, s.Features.Volatility, s.Features.Change5D, s.Features.MA5Slope, s.Features.MomentumScore, s.Outcome.Future1D, s.Outcome.Future5D))
+		}
+	}
+
+	sb.WriteString("\n【输出JSON格式】\n")
+	sb.WriteString("{\"ai_today\":{...}|null,\"future_klines\":[{...}],\"confidence\":0-100,\"reasons\":[...]}\n")
+
+	return sb.String()
+}
+
+func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData) (*model.KlineData, []model.KlineData, error) {
+	if dashscopeAPIKey == "" {
+		return nil, nil, fmt.Errorf("DASHSCOPE_API_KEY 未配置")
+	}
+
+	var samples []llmSample
+	if llmSamplesPath != "" {
+		if loaded, err := loadLLMSamples(llmSamplesPath); err == nil {
+			samples = loaded
+		}
+	}
+	topSamples := selectTopSamples(indicators, samples, llmSamplesTopK)
+
+	prompt := buildOHLCVPrompt(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, topSamples)
+
+	req := QwenRequest{Model: llmModel}
+	req.Input.Messages = []Message{
+		{
+			Role:    "system",
+			Content: "你是一个只输出严格JSON的预测服务。输出必须是可被json解析的对象，禁止输出markdown/解释/额外文本。",
+		},
+		{
+			Role:    "user",
+			Content: prompt,
+		},
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("序列化请求失败: %v", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, nil, fmt.Errorf("创建请求失败: %v", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+dashscopeAPIKey)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var qwenResp QwenResponse
+	if err := json.Unmarshal(body, &qwenResp); err != nil {
+		return nil, nil, fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	result := qwenResp.Output.Text
+	if result == "" && len(qwenResp.Output.Choices) > 0 {
+		result = qwenResp.Output.Choices[0].Message.Content
+	}
+	jsonText := extractJSONObject(result)
+	if jsonText == "" {
+		return nil, nil, fmt.Errorf("LLM未返回可解析JSON")
+	}
+
+	var out ohlcvLLMResponse
+	if err := json.Unmarshal([]byte(jsonText), &out); err != nil {
+		return nil, nil, fmt.Errorf("解析LLM JSON失败: %v", err)
+	}
+	if len(out.FutureKlines) == 0 {
+		return out.AIToday, nil, fmt.Errorf("LLM返回future_klines为空")
+	}
+	return out.AIToday, out.FutureKlines, nil
 }
 
 // QwenRequest 通义千问请求
@@ -63,9 +331,9 @@ type NewsItem struct {
 
 // NewsImpact 新闻影响评估
 type NewsImpact struct {
-	SentimentScore float64 `json:"sentiment_score"` // 情感评分 -1到+1
-	ImportanceLevel int    `json:"importance_level"` // 重要性等级 1-5
-	PriceImpact    float64 `json:"price_impact"`     // 预期价格影响 -0.2到+0.2
+	SentimentScore  float64 `json:"sentiment_score"`  // 情感评分 -1到+1
+	ImportanceLevel int     `json:"importance_level"` // 重要性等级 1-5
+	PriceImpact     float64 `json:"price_impact"`     // 预期价格影响 -0.2到+0.2
 }
 
 // AnalyzeStock 使用通义千问分析股票

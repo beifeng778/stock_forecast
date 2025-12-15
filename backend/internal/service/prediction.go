@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"hash/fnv"
 	"math"
 	"math/rand"
 	"strings"
@@ -12,6 +13,12 @@ import (
 	"stock-forecast-backend/internal/model"
 	"stock-forecast-backend/internal/stockdata"
 )
+
+func seedFromString(s string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s))
+	return int64(h.Sum64())
+}
 
 func getDailyPriceLimitPercent(stockCode, stockName string) float64 {
 	code := strings.TrimSpace(stockCode)
@@ -165,10 +172,22 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		return nil, fmt.Errorf("获取技术指标失败: 返回数据为空")
 	}
 
+	now := time.Now()
+	todayStr := now.Format("2006-01-02")
+	last := kline.Data[len(kline.Data)-1]
+	hasTodayData := last.Date == todayStr
+	needPredictToday := isIntraday && !hasTodayData
+
+	var indicatorsForTodayPred *stockdata.Indicators
+	if hasTodayData && len(kline.Data) >= 2 {
+		indicatorsForTodayPred, _ = stockdata.CalculateIndicators(kline.Data[:len(kline.Data)-1])
+	}
+
 	techIndicators := convertIndicators(indicators)
 
 	// 4. 生成技术信号（从 stockdata 获取）
 	signals := convertSignals(indicators.Signals)
+	signalsForTodayPred := signals
 
 	// 5. 获取股票新闻
 	newsItems, _ := stockdata.GetStockNews(code, 5)
@@ -204,18 +223,62 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	// 10. 获取近期每日涨跌幅
 	dailyChanges := getDailyChangesFromKline(kline.Data, 10)
 
-	now := time.Now()
-	todayStr := now.Format("2006-01-02")
-	last := kline.Data[len(kline.Data)-1]
-	hasTodayData := last.Date == todayStr
-	needPredictToday := isIntraday && !hasTodayData
+	confidenceForTodayPred := confidence
+	targetPricesForTodayPred := targetPrices
+	volatilityForTodayPred := indicators.Volatility
+	supportForTodayPred := indicators.SupportLevel
+	resistanceForTodayPred := indicators.ResistanceLevel
+	if indicatorsForTodayPred != nil {
+		signalsForTodayPred = convertSignals(indicatorsForTodayPred.Signals)
+		mlPredForTodayPred := generateMLPredictions(indicatorsForTodayPred)
+		trendForTodayPred, _, confForTodayPred := determineTrendWithNews(mlPredForTodayPred, signalsForTodayPred, newsImpact)
+		confidenceForTodayPred = confForTodayPred
+		targetPricesForTodayPred = calculateTargetPricesWithNews(indicatorsForTodayPred.CurrentPrice, trendForTodayPred, confidenceForTodayPred, newsImpact)
+		volatilityForTodayPred = indicatorsForTodayPred.Volatility
+		supportForTodayPred = indicatorsForTodayPred.SupportLevel
+		resistanceForTodayPred = indicatorsForTodayPred.ResistanceLevel
+	}
 
 	var aiToday *model.KlineData
-	if isIntraday && hasTodayData {
-		aiToday = generateTodayKline(code, stockName, kline.Data, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
+	if hasTodayData {
+		aiToday = generateTodayKline(code, stockName, kline.Data, targetPricesForTodayPred.Short, supportForTodayPred, resistanceForTodayPred, confidenceForTodayPred, volatilityForTodayPred)
 	}
 
 	futureKlines := generateFutureKlines(code, stockName, kline.Data, isIntraday, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
+
+	// 11. 使用LLM生成结构化OHLCV预测（ai_today + future_klines），失败则回退本地预测
+	llmIndicators := techIndicators
+	llmSignals := signals
+	if indicatorsForTodayPred != nil {
+		llmIndicators = convertIndicators(indicatorsForTodayPred)
+		llmSignals = signalsForTodayPred
+	}
+
+	llmHistorySrc := kline.Data
+	if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr {
+		llmHistorySrc = llmHistorySrc[:len(llmHistorySrc)-1]
+	}
+	llmHistory := make([]model.KlineData, 0, len(llmHistorySrc))
+	for _, d := range llmHistorySrc {
+		llmHistory = append(llmHistory, model.KlineData{
+			Date:   d.Date,
+			Open:   d.Open,
+			Close:  d.Close,
+			High:   d.High,
+			Low:    d.Low,
+			Volume: d.Volume,
+			Amount: d.Amount,
+		})
+	}
+
+	hasTodayActual := hasTodayData && !isIntraday
+	llmAiToday, llmFutureKlines, llmErr := langchain.PredictOHLCV(code, stockName, todayStr, hasTodayActual, needPredictToday, llmIndicators, llmSignals, news, llmHistory)
+	if llmErr == nil && len(llmFutureKlines) > 0 {
+		aiToday = llmAiToday
+		futureKlines = llmFutureKlines
+	} else if llmErr != nil {
+		fmt.Printf("[LLM] PredictOHLCV失败(%s): %v\n", code, llmErr)
+	}
 
 	return &model.PredictResult{
 		StockCode:    code,
@@ -258,6 +321,8 @@ func generateTodayKline(stockCode, stockName string, history []stockdata.KlineDa
 		return nil
 	}
 
+	prevDay := history[len(history)-2]
+
 	anchorClose := history[len(history)-2].Close
 	if anchorClose <= 0 {
 		return nil
@@ -278,35 +343,62 @@ func generateTodayKline(stockCode, stockName string, history []stockdata.KlineDa
 		dailyStd = 0.01
 	}
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	open := anchorClose
-	ret := drift + rng.NormFloat64()*dailyStd*0.5
-	close := anchorClose * (1 + ret)
-	if close <= 0 {
-		close = anchorClose
-	}
-
-	rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.8
-	high := math.Max(open, close) * (1 + rangeFactor)
-	low := math.Min(open, close) * (1 - rangeFactor)
-	if low <= 0 {
-		low = math.Min(open, close)
-	}
-
-	limit := getDailyPriceLimitPercent(stockCode, stockName)
-	clampKlineToLimit(anchorClose, limit, &open, &high, &low, &close)
-
 	_ = supportLevel
 	_ = resistanceLevel
 
+	simulations := 50
+	baseSeed := seedFromString(stockCode + "|" + todayStr + "|today")
+
+	sumOpen := 0.0
+	sumClose := 0.0
+	sumHigh := 0.0
+	sumLow := 0.0
+	limit := getDailyPriceLimitPercent(stockCode, stockName)
+	for i := 0; i < simulations; i++ {
+		rng := rand.New(rand.NewSource(baseSeed + int64(i)*10007))
+
+		open := anchorClose
+		ret := drift + rng.NormFloat64()*dailyStd*0.5
+		close := anchorClose * (1 + ret)
+		if close <= 0 {
+			close = anchorClose
+		}
+
+		rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.8
+		high := math.Max(open, close) * (1 + rangeFactor)
+		low := math.Min(open, close) * (1 - rangeFactor)
+		if low <= 0 {
+			low = math.Min(open, close)
+		}
+
+		clampKlineToLimit(anchorClose, limit, &open, &high, &low, &close)
+
+		sumOpen += open
+		sumClose += close
+		sumHigh += high
+		sumLow += low
+	}
+
+	open := sumOpen / float64(simulations)
+	close := sumClose / float64(simulations)
+	high := sumHigh / float64(simulations)
+	low := sumLow / float64(simulations)
+
+	high = math.Max(high, math.Max(open, close))
+	low = math.Min(low, math.Min(open, close))
+	clampKlineToLimit(anchorClose, limit, &open, &high, &low, &close)
+
+	volume := prevDay.Volume
+	amount := prevDay.Amount
+
 	return &model.KlineData{
 		Date:   todayStr,
-		Open:   round2(open),
-		Close:  round2(close),
-		High:   round2(high),
-		Low:    round2(low),
-		Volume: last.Volume,
-		Amount: last.Amount,
+		Open:   round4(open),
+		Close:  round4(close),
+		High:   round4(high),
+		Low:    round4(low),
+		Volume: volume,
+		Amount: amount,
 	}
 }
 
@@ -383,32 +475,46 @@ func generateFutureKlines(stockCode, stockName string, history []stockdata.Kline
 		dailyStd = 0.01
 	}
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	_ = supportLevel
+	_ = resistanceLevel
 
 	currentDate := now
 	if !isIntraday || hasTodayData {
 		currentDate = currentDate.AddDate(0, 0, 1)
 	}
 
-	prevClose := anchorClose
-	result := make([]model.KlineData, 0, steps)
-	limit := getDailyPriceLimitPercent(stockCode, stockName)
-	for len(result) < steps {
+	dates := make([]time.Time, 0, steps)
+	for len(dates) < steps {
 		wd := currentDate.Weekday()
-		if wd == time.Saturday || wd == time.Sunday {
-			currentDate = currentDate.AddDate(0, 0, 1)
-			continue
+		if wd != time.Saturday && wd != time.Sunday {
+			dates = append(dates, currentDate)
+		}
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+
+	limit := getDailyPriceLimitPercent(stockCode, stockName)
+	baseSeed := seedFromString(stockCode + "|" + todayStr + "|futureS")
+	rng := rand.New(rand.NewSource(baseSeed))
+
+	target := targetPrice
+	if target <= 0 {
+		target = anchorClose
+	}
+
+	result := make([]model.KlineData, 0, steps)
+	prevClose := anchorClose
+	for d := 0; d < steps; d++ {
+		t := float64(d+1) / float64(steps)
+		expectedClose := anchorClose + (target-anchorClose)*t
+		if expectedClose <= 0 {
+			expectedClose = prevClose
 		}
 
-		gap := rng.NormFloat64() * dailyStd * 0.15
+		gap := rng.NormFloat64() * dailyStd * 0.08
 		open := prevClose * (1 + gap)
-		ret := drift + rng.NormFloat64()*dailyStd*0.5
-		close := prevClose * (1 + ret)
-		if close <= 0 {
-			close = prevClose
-		}
+		close := expectedClose
 
-		rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.8
+		rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.6
 		high := math.Max(open, close) * (1 + rangeFactor)
 		low := math.Min(open, close) * (1 - rangeFactor)
 		if low <= 0 {
@@ -416,35 +522,39 @@ func generateFutureKlines(stockCode, stockName string, history []stockdata.Kline
 		}
 
 		clampKlineToLimit(prevClose, limit, &open, &high, &low, &close)
+		high = math.Max(high, math.Max(open, close))
+		low = math.Min(low, math.Min(open, close))
 
 		volume := avgVolume
 		if volume > 0 {
-			volume = volume * (0.7 + 0.6*rng.Float64())
+			volume = volume * (0.85 + 0.3*rng.Float64())
 		}
 		amount := volume * close
 
-		_ = supportLevel
-		_ = resistanceLevel
-
 		result = append(result, model.KlineData{
-			Date:   currentDate.Format("2006-01-02"),
-			Open:   round2(open),
-			Close:  round2(close),
-			High:   round2(high),
-			Low:    round2(low),
+			Date:   dates[d].Format("2006-01-02"),
+			Open:   round4(open),
+			Close:  round4(close),
+			High:   round4(high),
+			Low:    round4(low),
 			Volume: volume,
 			Amount: amount,
 		})
 
 		prevClose = close
-		currentDate = currentDate.AddDate(0, 0, 1)
 	}
+
+	_ = drift
 
 	return result
 }
 
 func round2(v float64) float64 {
 	return math.Round(v*100) / 100
+}
+
+func round4(v float64) float64 {
+	return math.Round(v*10000) / 10000
 }
 
 // convertIndicators 转换技术指标

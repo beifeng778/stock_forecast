@@ -442,63 +442,144 @@ const TrendChart: React.FC = () => {
               }
               const aiChangeColor =
                 aiChangePercent >= 0 ? "#f5222d" : "#52c41a";
-              const aiChangeSign = aiChangePercent >= 0 ? "+" : "";
+              const aiChangeAbs = Math.abs(aiChangePercent);
+              const aiChangeText =
+                aiChangeAbs > 0 && aiChangeAbs < 0.01
+                  ? `${aiChangePercent >= 0 ? "+" : "-"}<0.01%`
+                  : `${aiChangePercent >= 0 ? "+" : "-"}${aiChangeAbs.toFixed(
+                      2
+                    )}%`;
 
               return `
                 <div style="font-size:12px">
                   <div style="font-weight:bold;margin-bottom:6px;color:#f59e0b">AI预测（今日未收盘） ${
                     data.date
                   }</div>
-                  <div>开盘: ${predToday.open.toFixed(2)}（预测值）</div>
+                  <div style="color:#f59e0b">开盘: ${predToday.open.toFixed(
+                    2
+                  )}（预测值）</div>
                   ${
                     showActualOpen
-                      ? `<div style="color:#94a3b8">开盘: ${data.open.toFixed(
+                      ? `<div style="color:#ffffff">开盘: ${data.open.toFixed(
                           2
                         )}（实际值）</div>`
                       : ""
                   }
 
-                  <div>收盘: ${predToday.close.toFixed(2)}（预测值）</div>
-                  ${
-                    showActualAll && hasActualClose
-                      ? `<div style="color:#94a3b8">收盘: ${data.close.toFixed(
-                          2
-                        )}（实际值）</div>`
-                      : ""
-                  }
+                  <div style="color:#f59e0b">收盘: ${predToday.close.toFixed(
+                    2
+                  )}（预测值）</div>
 
-                  <div>最高: ${predToday.high.toFixed(2)}（预测值）</div>
+                  <div style="color:#f59e0b">最高: ${predToday.high.toFixed(
+                    2
+                  )}（预测值）</div>
                   ${
                     showActualAll && hasActualHigh
-                      ? `<div style="color:#94a3b8">最高: ${data.high.toFixed(
+                      ? `<div style="color:#ffffff">最高: ${data.high.toFixed(
                           2
                         )}（实际值）</div>`
                       : ""
                   }
 
-                  <div>最低: ${predToday.low.toFixed(2)}（预测值）</div>
+                  <div style="color:#f59e0b">最低: ${predToday.low.toFixed(
+                    2
+                  )}（预测值）</div>
                   ${
                     showActualAll && hasActualLow
-                      ? `<div style="color:#94a3b8">最低: ${data.low.toFixed(
+                      ? `<div style="color:#ffffff">最低: ${data.low.toFixed(
                           2
                         )}（实际值）</div>`
                       : ""
                   }
 
-                  <div>成交量: ${(predToday.volume / 10000).toFixed(
-                    0
-                  )}万（预测值）</div>
+                  <div style="color:#f59e0b">成交量: ${(
+                    predToday.volume / 10000
+                  ).toFixed(0)}万（预测值）</div>
                   ${
                     showActualAll && hasActualVolume
-                      ? `<div style="color:#94a3b8">成交量: ${(
+                      ? `<div style="color:#ffffff">成交量: ${(
                           data.volume / 10000
                         ).toFixed(0)}万（实际值）</div>`
                       : ""
                   }
 
-                  <div style="color:${aiChangeColor};font-weight:bold;margin-top:4px">AI预测涨跌幅: ${aiChangeSign}${aiChangePercent.toFixed(
+                  <div style="color:${aiChangeColor};font-weight:bold;margin-top:4px">AI预测涨跌幅: ${aiChangeText}</div>
+                  ${
+                    pred
+                      ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(
+                          2
+                        )} | 支撑: ${pred.support_level.toFixed(
+                          2
+                        )} | 压力: ${pred.resistance_level.toFixed(2)}</div>`
+                      : ""
+                  }
+                </div>
+              `;
+            }
+
+            if (showActualAll && predToday) {
+              let aiChangePercent = 0;
+              if (idx > 0 && klineData[idx - 1]?.close > 0) {
+                aiChangePercent =
+                  ((predToday.close - klineData[idx - 1].close) /
+                    klineData[idx - 1].close) *
+                  100;
+              }
+              const aiChangeColor =
+                aiChangePercent >= 0 ? "#f5222d" : "#52c41a";
+              const aiChangeAbs = Math.abs(aiChangePercent);
+              const aiChangeText =
+                aiChangeAbs > 0 && aiChangeAbs < 0.01
+                  ? `${aiChangePercent >= 0 ? "+" : "-"}<0.01%`
+                  : `${aiChangePercent >= 0 ? "+" : "-"}${aiChangeAbs.toFixed(
+                      2
+                    )}%`;
+
+              return `
+                <div style="font-size:12px">
+                  <div style="font-weight:bold;margin-bottom:6px;color:#f59e0b">AI预测（今日已收盘） ${
+                    data.date
+                  }</div>
+                  <div style="color:#f59e0b">开盘: ${predToday.open.toFixed(
+                    2
+                  )}（预测值）</div>
+                  <div style="color:#ffffff">开盘: ${data.open.toFixed(
+                    2
+                  )}（实际值）</div>
+
+                  <div style="color:#f59e0b">收盘: ${predToday.close.toFixed(
+                    2
+                  )}（预测值）</div>
+                  <div style="color:#ffffff">收盘: ${data.close.toFixed(
+                    2
+                  )}（实际值）</div>
+
+                  <div style="color:#f59e0b">最高: ${predToday.high.toFixed(
+                    2
+                  )}（预测值）</div>
+                  <div style="color:#ffffff">最高: ${data.high.toFixed(
+                    2
+                  )}（实际值）</div>
+
+                  <div style="color:#f59e0b">最低: ${predToday.low.toFixed(
+                    2
+                  )}（预测值）</div>
+                  <div style="color:#ffffff">最低: ${data.low.toFixed(
+                    2
+                  )}（实际值）</div>
+
+                  <div style="color:#f59e0b">成交量: ${(
+                    predToday.volume / 10000
+                  ).toFixed(0)}万（预测值）</div>
+                  <div style="color:#ffffff">成交量: ${(
+                    data.volume / 10000
+                  ).toFixed(0)}万（实际值）</div>
+
+                  <div style="color:${histChangeColor};font-weight:bold;margin-top:4px">实际涨跌幅: ${histChangeSign}${histChangePercent.toFixed(
                 2
               )}%</div>
+
+                  <div style="color:${aiChangeColor};font-weight:bold;margin-top:4px">AI预测涨跌幅: ${aiChangeText}</div>
                   ${
                     pred
                       ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(
@@ -558,7 +639,11 @@ const TrendChart: React.FC = () => {
               changePercent = ((predKline.close - prevClose) / prevClose) * 100;
             }
             const changeColor = changePercent >= 0 ? "#f5222d" : "#52c41a";
-            const changeSign = changePercent >= 0 ? "+" : "";
+            const changeAbs = Math.abs(changePercent);
+            const changeText =
+              changeAbs > 0 && changeAbs < 0.01
+                ? `${changePercent >= 0 ? "+" : "-"}<0.01%`
+                : `${changePercent >= 0 ? "+" : "-"}${changeAbs.toFixed(2)}%`;
 
             return `
               <div style="font-size:12px">
@@ -572,9 +657,7 @@ const TrendChart: React.FC = () => {
                 <div>成交量: ${(predKline.volume / 10000).toFixed(
                   0
                 )}万${suffix}</div>
-                <div style="color:${changeColor};font-weight:bold">AI预测涨跌幅: ${changeSign}${changePercent.toFixed(
-              2
-            )}%</div>
+                <div style="color:${changeColor};font-weight:bold">AI预测涨跌幅: ${changeText}</div>
                 ${
                   pred
                     ? `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(
