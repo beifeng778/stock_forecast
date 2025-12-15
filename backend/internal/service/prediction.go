@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +12,61 @@ import (
 	"stock-forecast-backend/internal/model"
 	"stock-forecast-backend/internal/stockdata"
 )
+
+func getDailyPriceLimitPercent(stockCode, stockName string) float64 {
+	code := strings.TrimSpace(stockCode)
+	name := strings.ToUpper(strings.TrimSpace(stockName))
+
+	limit := 0.10
+	if strings.HasPrefix(code, "300") || strings.HasPrefix(code, "301") || strings.HasPrefix(code, "688") {
+		limit = 0.20
+	} else if strings.HasPrefix(code, "8") || strings.HasPrefix(code, "4") {
+		limit = 0.30
+	}
+
+	if limit == 0.10 {
+		if strings.Contains(name, "ST") {
+			limit = 0.05
+		}
+	}
+
+	return limit
+}
+
+func clamp(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func clampKlineToLimit(prevClose, limit float64, open, high, low, close *float64) {
+	if prevClose <= 0 || limit <= 0 {
+		return
+	}
+
+	lo := prevClose * (1 - limit)
+	hi := prevClose * (1 + limit)
+
+	*open = clamp(*open, lo, hi)
+	*close = clamp(*close, lo, hi)
+
+	minOC := math.Min(*open, *close)
+	maxOC := math.Max(*open, *close)
+
+	*high = clamp(*high, maxOC, hi)
+	*low = clamp(*low, lo, minOC)
+
+	if *high < *low {
+		*high = maxOC
+		*low = minOC
+		*high = clamp(*high, *low, hi)
+		*low = clamp(*low, lo, *high)
+	}
+}
 
 func isTradingTimeNow() bool {
 	now := time.Now()
@@ -156,10 +212,10 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 
 	var aiToday *model.KlineData
 	if isIntraday && hasTodayData {
-		aiToday = generateTodayKline(kline.Data, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
+		aiToday = generateTodayKline(code, stockName, kline.Data, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
 	}
 
-	futureKlines := generateFutureKlines(kline.Data, isIntraday, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
+	futureKlines := generateFutureKlines(code, stockName, kline.Data, isIntraday, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
 
 	return &model.PredictResult{
 		StockCode:    code,
@@ -190,7 +246,7 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	}, nil
 }
 
-func generateTodayKline(history []stockdata.KlineData, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) *model.KlineData {
+func generateTodayKline(stockCode, stockName string, history []stockdata.KlineData, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) *model.KlineData {
 	if len(history) < 2 {
 		return nil
 	}
@@ -237,6 +293,9 @@ func generateTodayKline(history []stockdata.KlineData, targetPrice float64, supp
 		low = math.Min(open, close)
 	}
 
+	limit := getDailyPriceLimitPercent(stockCode, stockName)
+	clampKlineToLimit(anchorClose, limit, &open, &high, &low, &close)
+
 	_ = supportLevel
 	_ = resistanceLevel
 
@@ -279,7 +338,7 @@ func getDailyChangesFromKline(data []stockdata.KlineData, days int) []model.Dail
 	return changes
 }
 
-func generateFutureKlines(history []stockdata.KlineData, isIntraday bool, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) []model.KlineData {
+func generateFutureKlines(stockCode, stockName string, history []stockdata.KlineData, isIntraday bool, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) []model.KlineData {
 	if len(history) == 0 {
 		return nil
 	}
@@ -333,6 +392,7 @@ func generateFutureKlines(history []stockdata.KlineData, isIntraday bool, target
 
 	prevClose := anchorClose
 	result := make([]model.KlineData, 0, steps)
+	limit := getDailyPriceLimitPercent(stockCode, stockName)
 	for len(result) < steps {
 		wd := currentDate.Weekday()
 		if wd == time.Saturday || wd == time.Sunday {
@@ -354,6 +414,8 @@ func generateFutureKlines(history []stockdata.KlineData, isIntraday bool, target
 		if low <= 0 {
 			low = math.Min(open, close)
 		}
+
+		clampKlineToLimit(prevClose, limit, &open, &high, &low, &close)
 
 		volume := avgVolume
 		if volume > 0 {
@@ -933,28 +995,28 @@ func generateNewsAnalysis(newsImpact langchain.NewsImpact, news []langchain.News
 	}
 
 	// 最新消息列表
-	analysis += "**最新消息**：\n"
+	analysis += "\n**最新消息**：\n\n"
 	for i, n := range news {
 		if i >= 3 { // 只显示前3条
 			break
 		}
-		analysis += fmt.Sprintf("• [%s] %s\n", n.Time, n.Title)
+		analysis += fmt.Sprintf("- %s %s\n", n.Time, n.Title)
 	}
 
 	// 投资建议
 	if newsImpact.ImportanceLevel >= 3 {
 		analysis += "\n**投资提示**：\n"
 		if newsImpact.SentimentScore > 0.5 {
-			analysis += "• 重要利好消息可能推动股价上涨，建议关注放量突破\n"
-			analysis += "• 注意消息兑现后的获利回吐风险"
+			analysis += "- 重要利好消息可能推动股价上涨，建议关注放量突破\n"
+			analysis += "- 注意消息兑现后的获利回吐风险"
 		} else if newsImpact.SentimentScore < -0.5 {
-			analysis += "• 重要利空消息可能施压股价，建议谨慎操作\n"
-			analysis += "• 关注是否出现超跌反弹机会"
+			analysis += "- 重要利空消息可能施压股价，建议谨慎操作\n"
+			analysis += "- 关注是否出现超跌反弹机会"
 		} else {
-			analysis += "• 消息面影响相对中性，以技术面分析为主"
+			analysis += "- 消息面影响相对中性，以技术面分析为主"
 		}
 	} else {
-		analysis += "\n**投资提示**：消息面影响有限，建议重点关注技术面信号。"
+		analysis += "\n**投资提示**：\n\n- 消息面影响有限，建议重点关注技术面信号。"
 	}
 
 	return analysis

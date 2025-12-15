@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Card, Tag, Progress, Collapse, Empty } from "antd";
 import {
   ArrowUpOutlined,
@@ -37,86 +37,116 @@ const SignalTag: React.FC<{ signal: Signal }> = ({ signal }) => {
 
 // 鼠标拖拽滚动Hook
 const useDragScroll = (uniqueId?: string) => {
-  const elementRef = useRef<HTMLDivElement>(null);
+  const [element, setElement] = useState<HTMLDivElement | null>(null);
   const isDragging = useRef(false);
+  const activePointerId = useRef<number | null>(null);
   const startX = useRef(0);
   const scrollLeft = useRef(0);
   const hasMoved = useRef(false);
 
+  const refCb = useCallback((node: HTMLDivElement | null) => {
+    setElement(node);
+  }, []);
+
   useEffect(() => {
-    const element = elementRef.current;
     if (!element) {
       return;
     }
 
     // 确保元素有正确的样式
-    element.style.cursor = 'grab';
-    element.style.userSelect = 'none';
-    element.style.overflowX = 'auto';
-    element.style.scrollbarWidth = 'none';
+    element.style.cursor = "grab";
+    element.style.userSelect = "none";
+    element.style.touchAction = "pan-y";
+    element.style.overflowX = "auto";
+    element.style.scrollbarWidth = "none";
 
-    const handleMouseDown = (e: MouseEvent) => {
-      console.log(`[${uniqueId}] MouseDown triggered, scrollWidth: ${element.scrollWidth}, clientWidth: ${element.clientWidth}`);
+    const getMaxScroll = () => element.scrollWidth - element.clientWidth;
 
-      // 检查是否可以滚动
-      if (element.scrollWidth <= element.clientWidth) {
-        console.log(`[${uniqueId}] No scroll needed, skipping drag`);
+    const handlePointerDown = (e: PointerEvent) => {
+      // 仅左键/触控笔/触摸触发
+      if (e.pointerType === "mouse" && e.button !== 0) {
         return;
       }
 
-      console.log(`[${uniqueId}] Starting drag`);
-      // 直接开始拖拽，不做复杂的事件检查
+      console.log(
+        `[${uniqueId}] PointerDown triggered, scrollWidth: ${
+          element.scrollWidth
+        }, clientWidth: ${element.clientWidth}, maxScroll: ${getMaxScroll()}`
+      );
+
       isDragging.current = true;
+      activePointerId.current = e.pointerId;
       hasMoved.current = false;
       startX.current = e.pageX;
       scrollLeft.current = element.scrollLeft;
-      element.style.cursor = 'grabbing';
+      element.style.cursor = "grabbing";
+
+      try {
+        element.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
       e.preventDefault();
       e.stopPropagation();
     };
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handlePointerMove = (e: PointerEvent) => {
       if (!isDragging.current) return;
+      if (activePointerId.current !== e.pointerId) return;
 
-      e.preventDefault();
-      hasMoved.current = true;
+      const maxScroll = getMaxScroll();
+      if (maxScroll <= 0) {
+        e.preventDefault();
+        return;
+      }
 
       const x = e.pageX;
-      const walk = (x - startX.current) * 2; // 增加滚动速度
+      const walk = (x - startX.current) * 2;
       const newScrollLeft = scrollLeft.current - walk;
+      if (newScrollLeft !== element.scrollLeft) {
+        hasMoved.current = true;
+      }
 
-      // 确保滚动值在有效范围内
-      const maxScroll = element.scrollWidth - element.clientWidth;
       element.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxScroll));
+      e.preventDefault();
     };
 
-    const handleMouseUp = () => {
-      if (isDragging.current) {
-        isDragging.current = false;
-        element.style.cursor = 'grab';
+    const endDrag = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      activePointerId.current = null;
+      element.style.cursor = "grab";
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (activePointerId.current !== e.pointerId) return;
+      try {
+        element.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
       }
+      endDrag();
     };
 
-    const handleMouseLeave = () => {
-      if (isDragging.current) {
-        isDragging.current = false;
-        element.style.cursor = 'grab';
-      }
+    const handlePointerCancel = (e: PointerEvent) => {
+      if (activePointerId.current !== e.pointerId) return;
+      endDrag();
     };
 
-    // 阻止拖拽时的文本选择
+    const handleWindowBlur = () => {
+      endDrag();
+    };
+
     const handleSelectStart = (e: Event) => {
       if (isDragging.current) {
         e.preventDefault();
       }
     };
 
-    // 阻止拖拽时的默认拖拽行为
     const handleDragStart = (e: DragEvent) => {
       e.preventDefault();
     };
 
-    // 点击事件处理，防止拖拽后触发点击
     const handleClick = (e: MouseEvent) => {
       if (hasMoved.current) {
         e.preventDefault();
@@ -124,7 +154,6 @@ const useDragScroll = (uniqueId?: string) => {
       }
     };
 
-    // 添加滚轮支持
     const handleWheel = (e: WheelEvent) => {
       if (element.scrollWidth > element.clientWidth) {
         e.preventDefault();
@@ -132,28 +161,30 @@ const useDragScroll = (uniqueId?: string) => {
       }
     };
 
-    element.addEventListener('mousedown', handleMouseDown);
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    element.addEventListener('mouseleave', handleMouseLeave);
-    element.addEventListener('selectstart', handleSelectStart);
-    element.addEventListener('dragstart', handleDragStart);
-    element.addEventListener('click', handleClick, true);
-    element.addEventListener('wheel', handleWheel, { passive: false });
+    element.addEventListener("pointerdown", handlePointerDown);
+    element.addEventListener("pointermove", handlePointerMove);
+    element.addEventListener("pointerup", handlePointerUp);
+    element.addEventListener("pointercancel", handlePointerCancel);
+    element.addEventListener("selectstart", handleSelectStart);
+    element.addEventListener("dragstart", handleDragStart);
+    element.addEventListener("click", handleClick, true);
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    window.addEventListener("blur", handleWindowBlur);
 
     return () => {
-      element.removeEventListener('mousedown', handleMouseDown);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      element.removeEventListener('mouseleave', handleMouseLeave);
-      element.removeEventListener('selectstart', handleSelectStart);
-      element.removeEventListener('dragstart', handleDragStart);
-      element.removeEventListener('click', handleClick, true);
-      element.removeEventListener('wheel', handleWheel);
+      element.removeEventListener("pointerdown", handlePointerDown);
+      element.removeEventListener("pointermove", handlePointerMove);
+      element.removeEventListener("pointerup", handlePointerUp);
+      element.removeEventListener("pointercancel", handlePointerCancel);
+      element.removeEventListener("selectstart", handleSelectStart);
+      element.removeEventListener("dragstart", handleDragStart);
+      element.removeEventListener("click", handleClick, true);
+      element.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("blur", handleWindowBlur);
     };
-  }, [uniqueId]);
+  }, [uniqueId, element, refCb]);
 
-  return elementRef;
+  return refCb;
 };
 
 // 单个预测结果卡片
@@ -254,8 +285,8 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
           size="small"
           items={[
             {
-              key: '1',
-              label: '详细分析',
+              key: "1",
+              label: "详细分析",
               children: (
                 <div className="analysis-content">
                   <div className="markdown-content">
@@ -280,9 +311,9 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                               ? "看跌"
                               : "震荡"}
                             (
-                            {(result.ml_predictions.lstm.confidence * 100).toFixed(
-                              0
-                            )}
+                            {(
+                              result.ml_predictions.lstm.confidence * 100
+                            ).toFixed(0)}
                             %)
                           </td>
                         </tr>
@@ -329,11 +360,15 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                   <div className="target-prices">
                     <h4>目标价位</h4>
                     <div className="target-grid">
-                      <div>短期(5日): {result.target_prices.short.toFixed(2)}</div>
+                      <div>
+                        短期(5日): {result.target_prices.short.toFixed(2)}
+                      </div>
                       <div>
                         中期(20日): {result.target_prices.medium.toFixed(2)}
                       </div>
-                      <div>长期(60日): {result.target_prices.long.toFixed(2)}</div>
+                      <div>
+                        长期(60日): {result.target_prices.long.toFixed(2)}
+                      </div>
                     </div>
                   </div>
 
@@ -356,7 +391,9 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                           >
                             {last5Days.map((item, index) => (
                               <div key={index} className="daily-change-item">
-                                <span className="date">{item.date.slice(5)}</span>
+                                <span className="date">
+                                  {item.date.slice(5)}
+                                </span>
                                 <span
                                   className={`change ${
                                     item.change >= 0 ? "up" : "down"
@@ -372,8 +409,8 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                       );
                     })()}
                 </div>
-              )
-            }
+              ),
+            },
           ]}
         />
       </div>

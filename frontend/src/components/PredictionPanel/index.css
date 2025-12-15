@@ -206,6 +206,8 @@
   -ms-overflow-style: none;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y;
 }
 
 .signals-section::-webkit-scrollbar {
@@ -451,6 +453,8 @@
   -ms-overflow-style: none;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y;
   /* 强制设置最小高度和宽度 */
   min-height: 50px;
   width: 100%;
@@ -471,10 +475,12 @@
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 6px;
-  min-width: 80px; /* 增加最小宽度，确保更容易触发滚动 */
+  min-width: 110px; /* 增加最小宽度，确保更容易触发滚动 */
   flex: 0 0 auto; /* 改为不伸缩，保持固定宽度 */
   /* 子元素不阻挡父元素的拖拽 */
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .daily-change-item .date {
