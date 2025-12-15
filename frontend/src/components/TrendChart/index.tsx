@@ -52,6 +52,7 @@ const TrendChart: React.FC = () => {
   const [stockName, setStockName] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [refreshAvailableTime, setRefreshAvailableTime] = useState<string>("17:00");
+  const chartRef = useRef<any>(null);
 
   // 获取系统配置
   useEffect(() => {
@@ -127,6 +128,32 @@ const TrendChart: React.FC = () => {
     loadData(false);
   }, [currentStock, loadData]);
 
+  // 添加全局点击事件来处理tooltip失焦
+  useEffect(() => {
+    const handleGlobalClick = (event: MouseEvent) => {
+      const chartInstance = chartRef.current?.getEchartsInstance();
+      if (chartInstance) {
+        const chartContainer = chartRef.current?.ele;
+        // 如果点击的不是图表区域，隐藏tooltip
+        if (chartContainer && !chartContainer.contains(event.target as Node)) {
+          chartInstance.dispatchAction({
+            type: 'hideTip'
+          });
+        }
+      }
+    };
+
+    document.addEventListener('click', handleGlobalClick);
+    document.addEventListener('touchstart', handleGlobalClick);
+
+    return () => {
+      document.removeEventListener('click', handleGlobalClick);
+      document.removeEventListener('touchstart', handleGlobalClick);
+    };
+  }, []);
+
+  // 只在交易日显示刷新按钮
+  const shouldShowRefreshButton = isTradingDay();
   const canRefresh = Boolean(currentStock) && isRefreshTimeAvailable();
   const refreshDisabled = !canRefresh || loading;
   const refreshTooltipTitle = !canRefresh
@@ -136,6 +163,13 @@ const TrendChart: React.FC = () => {
   const handleRefresh = async () => {
     if (refreshDisabled) return;
     await loadData(true);
+  };
+
+  // 处理移动端点击置灰按钮的提示
+  const handleDisabledRefreshClick = () => {
+    if (refreshDisabled) {
+      message.info(refreshTooltipTitle);
+    }
   };
 
   // 预测K线数据类型
@@ -458,7 +492,7 @@ const TrendChart: React.FC = () => {
         confine: true, // 限制tooltip在图表区域内
         transitionDuration: 0.1, // 减少过渡时间，让移动更流畅
         alwaysShowContent: false, // 确保不会一直显示
-        triggerOn: 'mousemove', // 只使用mousemove触发
+        triggerOn: 'mousemove|click', // 支持鼠标移动和点击触发，移动端更友好
         appendToBody: false, // 不添加到body，避免定位问题
         renderMode: 'html', // 使用HTML渲染模式，提升性能
         position: function (point: number[], params: any, dom: HTMLElement, rect: any, size: any) {
@@ -795,16 +829,18 @@ const TrendChart: React.FC = () => {
               placeholder="选择股票"
             />
           )}
-          <Tooltip title={refreshTooltipTitle}>
-            <Button
-              size="small"
-              icon={<ReloadOutlined />}
-              onClick={handleRefresh}
-              disabled={refreshDisabled}
-            >
-              刷新
-            </Button>
-          </Tooltip>
+          {shouldShowRefreshButton && (
+            <Tooltip title={refreshTooltipTitle}>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={refreshDisabled ? handleDisabledRefreshClick : handleRefresh}
+                disabled={refreshDisabled}
+              >
+                刷新
+              </Button>
+            </Tooltip>
+          )}
         </Space>
       </div>
 
@@ -819,6 +855,7 @@ const TrendChart: React.FC = () => {
           <Empty description="请选择股票查看趋势" />
         ) : (
           <ReactECharts
+            ref={chartRef}
             option={chartOption}
             style={{ height: "100%", width: "100%" }}
             notMerge={true}
