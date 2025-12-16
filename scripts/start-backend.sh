@@ -11,4 +11,5 @@ if [ -f ".env" ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
-go run cmd/server/main.go
+mkdir -p ../rag
+LLM_SAMPLES_PATH=../rag go run cmd/server/main.go

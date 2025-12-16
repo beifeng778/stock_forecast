@@ -6,7 +6,7 @@
 
 - **股票选择**：支持搜索和多选沪深 A 股（600/000 开头）
 - **趋势图表**：日 K 线展示
-- **智能预测**：结合技术指标分析和 LLM（通义千问）综合分析
+- **智能预测**：结合技术指标分析和 LLM（OpenAI 兼容接口）综合分析
 - **预测输出**：趋势方向、价格区间、目标价、置信度、支撑/压力位、技术信号、AI 分析
 - **委托模拟**：模拟买卖计算盈亏，包含手续费（佣金、印花税、过户费）
 
@@ -23,7 +23,7 @@
 | 前端 | React 18 + TypeScript + Ant Design + ECharts + Zustand |
 | 后端 | Golang + Gin |
 | 数据源 | 东方财富 / 新浪财经 API |
-| LLM | 阿里百炼 (Qwen) |
+| LLM | OpenAI Chat Completions 兼容接口（例如 DeepSeek） |
 
 ## 快速开始
 
@@ -35,10 +35,10 @@
 ### 首次安装
 
 ```bash
-# 1. 配置阿里百炼 API Key
+# 1. 配置 LLM 接口（OpenAI 兼容）
 cd backend
 cp .env.example .env
-# 编辑 .env 文件，填入你的 DASHSCOPE_API_KEY
+# 编辑 .env 文件，填入你的 LLM_BASE_URL / LLM_AUTH_TOKEN
 cd ..
 
 # 2. 安装前端依赖
@@ -82,18 +82,12 @@ cd ..
 
 ## 配置说明
 
-### 阿里百炼 API
+### LLM 接口（OpenAI 兼容）
 
-1. 访问 [阿里百炼平台](https://bailian.console.aliyun.com/) 注册账号
-2. 创建 API Key
-3. 将 API Key 填入 `backend/.env` 文件的 `DASHSCOPE_API_KEY`
-
-### 可选模型
-
-- `qwen-turbo`：速度快，成本低
-- `qwen-plus`：平衡性能和成本
-- `qwen-max`：最强能力，成本较高
-- `qwen3-max`：最新模型（推荐）
+- 环境变量：
+  - `LLM_BASE_URL`（例如 `https://api.deepseek.com`）
+  - `LLM_AUTH_TOKEN`（例如 `sk-...`）
+  - `LLM_MODEL`（例如 `deepseek-chat`）
 
 ## API 接口
 

@@ -274,8 +274,13 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	hasTodayActual := hasTodayData && !isIntraday
 	llmAiToday, llmFutureKlines, llmErr := langchain.PredictOHLCV(code, stockName, todayStr, hasTodayActual, needPredictToday, llmIndicators, llmSignals, news, llmHistory)
 	if llmErr == nil && len(llmFutureKlines) > 0 {
-		aiToday = llmAiToday
+		if llmAiToday != nil {
+			aiToday = llmAiToday
+		}
 		futureKlines = llmFutureKlines
+		if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
+			targetPrices.Short = llmFutureKlines[len(llmFutureKlines)-1].Close
+		}
 	} else if llmErr != nil {
 		fmt.Printf("[LLM] PredictOHLCV失败(%s): %v\n", code, llmErr)
 	}

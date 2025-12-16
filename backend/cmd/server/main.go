@@ -5,10 +5,12 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"stock-forecast-backend/internal/cache"
 	"stock-forecast-backend/internal/handler"
 	"stock-forecast-backend/internal/scheduler"
+	"stock-forecast-backend/internal/stockdata"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -53,6 +55,8 @@ func main() {
 	// 初始化Redis
 	if err := cache.InitRedis(); err != nil {
 		log.Printf("警告: %v，将使用内存缓存", err)
+	} else {
+		stockdata.SetCacheProvider(redisCacheAdapter{})
 	}
 
 	r := gin.Default()
@@ -111,4 +115,14 @@ func main() {
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("启动服务失败: %v", err)
 	}
+}
+
+type redisCacheAdapter struct{}
+
+func (redisCacheAdapter) Get(key string, dest any) error {
+	return cache.Get(key, dest)
+}
+
+func (redisCacheAdapter) Set(key string, value any, expiration time.Duration) error {
+	return cache.Set(key, value, expiration)
 }

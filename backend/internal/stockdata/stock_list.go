@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"stock-forecast-backend/internal/cache"
 	"strings"
 	"sync"
 	"time"
@@ -49,9 +48,8 @@ func RefreshStockCache() ([]Stock, error) {
 		return nil, fmt.Errorf("获取股票列表失败")
 	}
 
-	// 全量替换到Redis
-	if err := cache.Set(stockListCacheKey, newStocks, cacheDuration); err != nil {
-		return nil, fmt.Errorf("保存到Redis失败: %v", err)
+	if err := getCacheProvider().Set(stockListCacheKey, newStocks, cacheDuration); err != nil {
+		return nil, fmt.Errorf("保存到缓存失败: %v", err)
 	}
 
 	fmt.Printf("股票缓存全量刷新完成: %d 只股票\n", len(newStocks))
@@ -72,7 +70,7 @@ func GetStockListWithRefresh2(forceRefresh bool) ([]Stock, bool) {
 	// 1. 尝试从Redis获取缓存
 	if !forceRefresh {
 		var cachedStocks []Stock
-		if err := cache.Get(stockListCacheKey, &cachedStocks); err == nil && len(cachedStocks) > 0 {
+		if err := getCacheProvider().Get(stockListCacheKey, &cachedStocks); err == nil && len(cachedStocks) > 0 {
 			fmt.Printf("从Redis缓存获取 %d 只股票\n", len(cachedStocks))
 			return cachedStocks, true
 		}
@@ -81,7 +79,7 @@ func GetStockListWithRefresh2(forceRefresh bool) ([]Stock, bool) {
 	// 2. 获取现有缓存用于增量更新
 	var existingStocks []Stock
 	if forceRefresh {
-		cache.Get(stockListCacheKey, &existingStocks)
+		getCacheProvider().Get(stockListCacheKey, &existingStocks)
 	}
 
 	// 3. 从数据源获取新数据
@@ -119,9 +117,8 @@ func GetStockListWithRefresh2(forceRefresh bool) ([]Stock, bool) {
 		fmt.Printf("全量更新: 获取 %d 只股票\n", len(finalStocks))
 	}
 
-	// 5. 保存到Redis
-	if err := cache.Set(stockListCacheKey, finalStocks, cacheDuration); err != nil {
-		fmt.Printf("保存到Redis失败: %v\n", err)
+	if err := getCacheProvider().Set(stockListCacheKey, finalStocks, cacheDuration); err != nil {
+		fmt.Printf("保存到缓存失败: %v\n", err)
 	}
 
 	return finalStocks, false

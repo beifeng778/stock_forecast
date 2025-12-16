@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"stock-forecast-backend/internal/cache"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,8 +66,6 @@ func GetKline(code, period string) (*KlineResponse, error) {
 func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse, error) {
 	key := getKlineCacheKey(code, period)
 
-
-
 	if !forceRefresh {
 		// 1) 内存缓存
 		klineCacheMu.RLock()
@@ -80,7 +77,7 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 
 		// 2) Redis缓存（可用则读取）
 		var cached KlineResponse
-		if err := cache.Get(key, &cached); err == nil && len(cached.Data) > 0 {
+		if err := getCacheProvider().Get(key, &cached); err == nil && len(cached.Data) > 0 {
 			resp := &cached
 			klineCacheMu.Lock()
 			klineCache[key] = klineCacheItem{Value: resp, ExpiresAt: time.Now().Add(getKlineCacheTTL(period))}
@@ -104,7 +101,7 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 		klineCacheMu.Lock()
 		klineCache[key] = klineCacheItem{Value: resp, ExpiresAt: time.Now().Add(ttl)}
 		klineCacheMu.Unlock()
-		_ = cache.Set(key, resp, ttl)
+		_ = getCacheProvider().Set(key, resp, ttl)
 
 		return resp, nil
 	}
@@ -124,7 +121,7 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 		klineCacheMu.Lock()
 		klineCache[key] = klineCacheItem{Value: resp, ExpiresAt: time.Now().Add(ttl)}
 		klineCacheMu.Unlock()
-		_ = cache.Set(key, resp, ttl)
+		_ = getCacheProvider().Set(key, resp, ttl)
 
 		return resp, nil
 	}

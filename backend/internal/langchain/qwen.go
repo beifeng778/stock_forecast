@@ -1,45 +1,133 @@
 package langchain
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"stock-forecast-backend/internal/model"
+	"stock-forecast-backend/pkg/llmsamples"
 )
 
 var (
-	dashscopeAPIKey string
+	llmBaseURL      string
+	llmAuthToken    string
 	llmModel        string
 	llmSamplesPath  string
 	llmSamplesTopK  int
+	llmDebugSamples bool
 )
 
-func init() {
-	dashscopeAPIKey = os.Getenv("DASHSCOPE_API_KEY")
+var llmConfigOnce sync.Once
+
+func ensureLLMConfig() {
+	llmConfigOnce.Do(loadLLMConfig)
+}
+
+func loadLLMConfig() {
+	llmBaseURL = strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
+	if llmBaseURL == "" {
+		llmBaseURL = "https://api.openai.com"
+	}
+	llmAuthToken = strings.TrimSpace(os.Getenv("LLM_AUTH_TOKEN"))
 	llmModel = os.Getenv("LLM_MODEL")
 	if llmModel == "" {
-		llmModel = "qwen-plus"
+		llmModel = "gpt-4o-mini"
 	}
+	llmDebugSamples = getEnvBool("LLM_DEBUG_SAMPLES", false)
 	llmSamplesPath = os.Getenv("LLM_SAMPLES_PATH")
 	if llmSamplesPath == "" {
-		llmSamplesPath = "data/llm_samples.jsonl"
+		llmSamplesPath = "/app/rag"
 	}
+	llmSamplesPath = ResolveLLMSamplesPath(llmSamplesPath)
 	llmSamplesTopK = 3
 	if v := strings.TrimSpace(os.Getenv("LLM_SAMPLES_TOPK")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 20 {
 			llmSamplesTopK = n
 		}
 	}
+}
+
+func getEnvBool(name string, defaultValue bool) bool {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return defaultValue
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return defaultValue
+	}
+}
+
+func chatCompletionsURL() string {
+	ensureLLMConfig()
+	return strings.TrimRight(llmBaseURL, "/") + "/v1/chat/completions"
+}
+
+func callChatCompletions(messages []Message, timeout time.Duration) (string, error) {
+	ensureLLMConfig()
+	if strings.TrimSpace(llmAuthToken) == "" {
+		return "", fmt.Errorf("LLM_AUTH_TOKEN 未配置")
+	}
+
+	req := OpenAIChatCompletionRequest{
+		Model:    llmModel,
+		Messages: messages,
+	}
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("序列化请求失败: %v", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", chatCompletionsURL(), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("创建请求失败: %v", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+llmAuthToken)
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var out OpenAIChatCompletionResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("解析响应失败: %v", err)
+	}
+	if out.Error != nil && strings.TrimSpace(out.Error.Message) != "" {
+		return "", fmt.Errorf("LLM错误: %s", out.Error.Message)
+	}
+	if len(out.Choices) == 0 {
+		return "", fmt.Errorf("LLM返回choices为空")
+	}
+	content := out.Choices[0].Message.Content
+	if strings.TrimSpace(content) == "" {
+		return "", fmt.Errorf("LLM返回空内容")
+	}
+	return content, nil
+}
+
+func ResolveLLMSamplesPath(p string) string {
+	return llmsamples.ResolvePath(p)
 }
 
 type ohlcvLLMResponse struct {
@@ -64,68 +152,51 @@ type llmSample struct {
 	} `json:"outcome"`
 }
 
-func loadLLMSamples(path string) ([]llmSample, error) {
-	f, err := os.Open(path)
+func loadTopLLMSamples(path string, ind model.TechnicalIndicators, topK int) []llmSample {
+	loaded, err := llmsamples.QueryTopK(path, llmsamples.Indicators{
+		RSI:           ind.RSI,
+		Volatility:    ind.Volatility,
+		Change5D:      ind.Change5D,
+		MA5Slope:      ind.MA5Slope,
+		MomentumScore: ind.MomentumScore,
+	}, topK)
 	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	samples := make([]llmSample, 0, 256)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+		if llmDebugSamples {
+			fmt.Printf("[LLM][samples] QueryTopK failed: db=%s err=%v\n", path, err)
 		}
-		var s llmSample
-		if err := json.Unmarshal([]byte(line), &s); err != nil {
-			continue
-		}
-		if s.ID == "" {
-			s.ID = fmt.Sprintf("sample_%d", len(samples)+1)
-		}
-		samples = append(samples, s)
-	}
-	if err := scanner.Err(); err != nil {
-		return samples, err
-	}
-	return samples, nil
-}
-
-func sampleDistance(ind model.TechnicalIndicators, s llmSample) float64 {
-	d := 0.0
-	d += math.Abs(ind.RSI-s.Features.RSI) / 100.0 * 2.0
-	d += math.Abs(ind.Volatility-s.Features.Volatility) / 0.10 * 2.0
-	d += math.Abs(ind.Change5D-s.Features.Change5D) / 20.0 * 1.0
-	d += math.Abs(ind.MA5Slope-s.Features.MA5Slope) / 5.0 * 1.0
-	d += math.Abs(ind.MomentumScore-s.Features.MomentumScore) / 100.0 * 1.0
-	return d
-}
-
-func selectTopSamples(ind model.TechnicalIndicators, samples []llmSample, topK int) []llmSample {
-	if topK <= 0 || len(samples) == 0 {
 		return nil
 	}
-	if topK > len(samples) {
-		topK = len(samples)
+	if len(loaded) == 0 {
+		return nil
 	}
 
-	type scored struct {
-		s llmSample
-		d float64
-	}
-	scoredSamples := make([]scored, 0, len(samples))
-	for _, s := range samples {
-		scoredSamples = append(scoredSamples, scored{s: s, d: sampleDistance(ind, s)})
-	}
-	sort.Slice(scoredSamples, func(i, j int) bool { return scoredSamples[i].d < scoredSamples[j].d })
-
-	out := make([]llmSample, 0, topK)
-	for i := 0; i < topK; i++ {
-		out = append(out, scoredSamples[i].s)
+	out := make([]llmSample, 0, len(loaded))
+	for _, s := range loaded {
+		var x llmSample
+		x.ID = s.ID
+		x.Features.RSI = s.RSI
+		x.Features.Volatility = s.Volatility
+		x.Features.Change5D = s.Change5D
+		x.Features.MA5Slope = s.MA5Slope
+		x.Features.MomentumScore = s.MomentumScore
+		x.Outcome.Future1D = s.Future1D
+		x.Outcome.Future5D = s.Future5D
+		out = append(out, x)
 	}
 	return out
+}
+
+func sampleIDs(samples []llmSample) string {
+	if len(samples) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(samples))
+	for _, s := range samples {
+		if strings.TrimSpace(s.ID) != "" {
+			ids = append(ids, s.ID)
+		}
+	}
+	return strings.Join(ids, ",")
 }
 
 func extractJSONObject(s string) string {
@@ -219,22 +290,15 @@ func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday
 }
 
 func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData) (*model.KlineData, []model.KlineData, error) {
-	if dashscopeAPIKey == "" {
-		return nil, nil, fmt.Errorf("DASHSCOPE_API_KEY 未配置")
+	ensureLLMConfig()
+	topSamples := loadTopLLMSamples(llmSamplesPath, indicators, llmSamplesTopK)
+	if llmDebugSamples {
+		fmt.Printf("[LLM][samples] code=%s db=%s topk=%d hit=%d ids=%s\n", code, llmSamplesPath, llmSamplesTopK, len(topSamples), sampleIDs(topSamples))
 	}
-
-	var samples []llmSample
-	if llmSamplesPath != "" {
-		if loaded, err := loadLLMSamples(llmSamplesPath); err == nil {
-			samples = loaded
-		}
-	}
-	topSamples := selectTopSamples(indicators, samples, llmSamplesTopK)
 
 	prompt := buildOHLCVPrompt(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, topSamples)
 
-	req := QwenRequest{Model: llmModel}
-	req.Input.Messages = []Message{
+	result, err := callChatCompletions([]Message{
 		{
 			Role:    "system",
 			Content: "你是一个只输出严格JSON的预测服务。输出必须是可被json解析的对象，禁止输出markdown/解释/额外文本。",
@@ -243,40 +307,9 @@ func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday boo
 			Role:    "user",
 			Content: prompt,
 		},
-	}
-
-	jsonData, err := json.Marshal(req)
+	}, 60*time.Second)
 	if err != nil {
-		return nil, nil, fmt.Errorf("序列化请求失败: %v", err)
-	}
-
-	httpReq, err := http.NewRequest("POST", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, nil, fmt.Errorf("创建请求失败: %v", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+dashscopeAPIKey)
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, nil, fmt.Errorf("请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, fmt.Errorf("读取响应失败: %v", err)
-	}
-
-	var qwenResp QwenResponse
-	if err := json.Unmarshal(body, &qwenResp); err != nil {
-		return nil, nil, fmt.Errorf("解析响应失败: %v", err)
-	}
-
-	result := qwenResp.Output.Text
-	if result == "" && len(qwenResp.Output.Choices) > 0 {
-		result = qwenResp.Output.Choices[0].Message.Content
+		return nil, nil, err
 	}
 	jsonText := extractJSONObject(result)
 	if jsonText == "" {
@@ -293,33 +326,27 @@ func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday boo
 	return out.AIToday, out.FutureKlines, nil
 }
 
-// QwenRequest 通义千问请求
-type QwenRequest struct {
-	Model string `json:"model"`
-	Input struct {
-		Messages []Message `json:"messages"`
-	} `json:"input"`
-}
-
 // Message 消息
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// QwenResponse 通义千问响应
-type QwenResponse struct {
-	Output struct {
-		Text    string `json:"text"`
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	} `json:"output"`
-	Usage struct {
-		TotalTokens int `json:"total_tokens"`
-	} `json:"usage"`
+type OpenAIChatCompletionRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+
+type OpenAIChatCompletionResponse struct {
+	Choices []struct {
+		Message struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
 }
 
 // NewsItem 新闻条目
@@ -338,18 +365,16 @@ type NewsImpact struct {
 
 // AnalyzeStock 使用通义千问分析股票
 func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml model.MLPredictions, signals []model.Signal, news []NewsItem) (string, error) {
-	if dashscopeAPIKey == "" {
-		fmt.Println("[LLM] DASHSCOPE_API_KEY 未配置，使用备用分析")
+	ensureLLMConfig()
+	if strings.TrimSpace(llmAuthToken) == "" {
+		fmt.Println("[LLM] LLM_AUTH_TOKEN 未配置，使用备用分析")
 		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
 	}
-	fmt.Printf("[LLM] 使用模型: %s, 新闻数量: %d\n", llmModel, len(news))
+	fmt.Printf("[LLM] 使用模型: %s, base_url=%s, 新闻数量: %d\n", llmModel, llmBaseURL, len(news))
 
 	prompt := buildAnalysisPrompt(code, name, indicators, ml, signals, news)
 
-	req := QwenRequest{
-		Model: llmModel,
-	}
-	req.Input.Messages = []Message{
+	result, err := callChatCompletions([]Message{
 		{
 			Role:    "system",
 			Content: "你是一位资深的量化分析师和技术分析专家，具备深厚的A股市场经验。你擅长：1)多维度技术指标解读 2)成交量与价格关系分析 3)市场环境感知 4)风险控制。请基于提供的全面技术数据，从技术面、资金面、市场环境三个维度给出专业分析，重点关注关键信号的确认与背离，提供具体的操作建议和风险提示。",
@@ -358,48 +383,9 @@ func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml mo
 			Role:    "user",
 			Content: prompt,
 		},
-	}
-	jsonData, err := json.Marshal(req)
+	}, 30*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("序列化请求失败: %v", err)
-	}
-
-	httpReq, err := http.NewRequest("POST", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("创建请求失败: %v", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+dashscopeAPIKey)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("读取响应失败: %v", err)
-	}
-
-	fmt.Printf("[LLM] API响应状态: %d, 响应内容: %s\n", resp.StatusCode, string(body)[:min(500, len(body))])
-
-	var qwenResp QwenResponse
-	if err := json.Unmarshal(body, &qwenResp); err != nil {
-		fmt.Printf("[LLM] 解析响应失败: %v\n", err)
-		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
-	}
-
-	// 优先从 choices 获取结果（qwen3 格式），否则从 text 获取（旧格式）
-	result := qwenResp.Output.Text
-	if result == "" && len(qwenResp.Output.Choices) > 0 {
-		result = qwenResp.Output.Choices[0].Message.Content
-	}
-
-	if result == "" {
-		fmt.Println("[LLM] API返回空结果，使用备用分析")
+		fmt.Printf("[LLM] 请求失败: %v\n", err)
 		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
 	}
 
@@ -608,14 +594,12 @@ type StockClassification struct {
 
 // GetStockClassification 使用LLM获取股票板块和行业
 func GetStockClassification(code, name string) StockClassification {
-	if dashscopeAPIKey == "" {
+	ensureLLMConfig()
+	if strings.TrimSpace(llmAuthToken) == "" {
 		return StockClassification{}
 	}
 
-	req := QwenRequest{
-		Model: llmModel,
-	}
-	req.Input.Messages = []Message{
+	result, err := callChatCompletions([]Message{
 		{
 			Role: "system",
 			Content: `你是一个股票数据助手。请返回股票所属的行业板块，格式为JSON：{"sector":"行业板块"}
@@ -633,46 +617,18 @@ func GetStockClassification(code, name string) StockClassification {
 			Role:    "user",
 			Content: fmt.Sprintf("股票%s（代码%s）在同花顺中属于哪个行业板块？", name, code),
 		},
-	}
-
-	jsonData, err := json.Marshal(req)
+	}, 10*time.Second)
 	if err != nil {
 		return StockClassification{}
-	}
-
-	httpReq, err := http.NewRequest("POST", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return StockClassification{}
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+dashscopeAPIKey)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return StockClassification{}
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return StockClassification{}
-	}
-
-	var qwenResp QwenResponse
-	if err := json.Unmarshal(body, &qwenResp); err != nil {
-		return StockClassification{}
-	}
-
-	result := qwenResp.Output.Text
-	if result == "" && len(qwenResp.Output.Choices) > 0 {
-		result = qwenResp.Output.Choices[0].Message.Content
 	}
 
 	// 解析JSON结果
 	var classification StockClassification
-	if err := json.Unmarshal([]byte(result), &classification); err != nil {
+	text := result
+	if jsonText := extractJSONObject(result); jsonText != "" {
+		text = jsonText
+	}
+	if err := json.Unmarshal([]byte(text), &classification); err != nil {
 		// 如果解析失败，尝试提取JSON部分
 		if start := findJSONStart(result); start >= 0 {
 			if end := findJSONEnd(result, start); end > start {
@@ -710,7 +666,8 @@ func findJSONEnd(s string, start int) int {
 
 // AnalyzeNewsImpact 分析新闻对股价的影响
 func AnalyzeNewsImpact(code, name string, news []NewsItem) NewsImpact {
-	if dashscopeAPIKey == "" || len(news) == 0 {
+	ensureLLMConfig()
+	if strings.TrimSpace(llmAuthToken) == "" || len(news) == 0 {
 		return NewsImpact{SentimentScore: 0, ImportanceLevel: 1, PriceImpact: 0}
 	}
 
@@ -741,10 +698,7 @@ func AnalyzeNewsImpact(code, name string, news []NewsItem) NewsImpact {
 - 业绩预告、重大合同、技术突破等为重要消息
 - 只返回JSON，不要其他内容`, name, code, newsStr)
 
-	req := QwenRequest{
-		Model: llmModel,
-	}
-	req.Input.Messages = []Message{
+	result, err := callChatCompletions([]Message{
 		{
 			Role:    "system",
 			Content: "你是专业的股票新闻分析师，擅长评估消息面对股价的影响。请客观分析新闻内容，给出量化评估。",
@@ -753,46 +707,18 @@ func AnalyzeNewsImpact(code, name string, news []NewsItem) NewsImpact {
 			Role:    "user",
 			Content: prompt,
 		},
-	}
-
-	jsonData, err := json.Marshal(req)
+	}, 15*time.Second)
 	if err != nil {
 		return NewsImpact{SentimentScore: 0, ImportanceLevel: 1, PriceImpact: 0}
-	}
-
-	httpReq, err := http.NewRequest("POST", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return NewsImpact{SentimentScore: 0, ImportanceLevel: 1, PriceImpact: 0}
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+dashscopeAPIKey)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return NewsImpact{SentimentScore: 0, ImportanceLevel: 1, PriceImpact: 0}
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return NewsImpact{SentimentScore: 0, ImportanceLevel: 1, PriceImpact: 0}
-	}
-
-	var qwenResp QwenResponse
-	if err := json.Unmarshal(body, &qwenResp); err != nil {
-		return NewsImpact{SentimentScore: 0, ImportanceLevel: 1, PriceImpact: 0}
-	}
-
-	result := qwenResp.Output.Text
-	if result == "" && len(qwenResp.Output.Choices) > 0 {
-		result = qwenResp.Output.Choices[0].Message.Content
 	}
 
 	// 解析JSON结果
 	var impact NewsImpact
-	if err := json.Unmarshal([]byte(result), &impact); err != nil {
+	text := result
+	if jsonText := extractJSONObject(result); jsonText != "" {
+		text = jsonText
+	}
+	if err := json.Unmarshal([]byte(text), &impact); err != nil {
 		// 如果解析失败，尝试提取JSON部分
 		if start := findJSONStart(result); start >= 0 {
 			if end := findJSONEnd(result, start); end > start {

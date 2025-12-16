@@ -22,13 +22,17 @@ import {
 import dayjs, { Dayjs } from "dayjs";
 import { useStockStore } from "../../store";
 import { simulateTrade, getKline } from "../../services/api";
+import {
+  getNextWorkdays as getNextWorkdaysUtil,
+  isMarketClosed as isMarketClosedUtil,
+  isWorkday as isWorkdayUtil,
+} from "../../utils/tradingTime";
 import type { ScenarioResult, KlineData } from "../../types";
 import "./index.css";
 
 // 判断是否为工作日（周一到周五）
 const isWorkday = (date: Dayjs): boolean => {
-  const day = date.day();
-  return day !== 0 && day !== 6; // 0是周日，6是周六
+  return isWorkdayUtil(date);
 };
 
 // 判断股票板块类型
@@ -73,9 +77,7 @@ const validateQuantity = (code: string, quantity: number): string | null => {
 
 // 判断A股是否已收盘（15:00收盘）
 const isMarketClosed = (): boolean => {
-  const now = dayjs();
-  const closeTime = now.hour() * 100 + now.minute();
-  return closeTime >= 1500;
+  return isMarketClosedUtil(new Date());
 };
 
 // 判断日期是否为未来（考虑收盘时间）
@@ -88,19 +90,7 @@ const isFutureDate = (date: Dayjs): boolean => {
 
 // 获取从今天开始的未来N个工作日
 const getNextWorkdays = (count: number): Dayjs[] => {
-  const workdays: Dayjs[] = [];
-  // 如果今天未收盘且是工作日，今天也算未来
-  let current = dayjs();
-  if (isMarketClosed() || !isWorkday(current)) {
-    current = current.add(1, "day");
-  }
-  while (workdays.length < count) {
-    if (isWorkday(current)) {
-      workdays.push(current);
-    }
-    current = current.add(1, "day");
-  }
-  return workdays;
+  return getNextWorkdaysUtil(count);
 };
 
 const TradeSimulator: React.FC = () => {

@@ -10,38 +10,35 @@ import { Button, Empty, Select, Space, Spin, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useStockStore } from "../../store";
 import { getKline, getSystemConfig } from "../../services/api";
+import {
+  getHHMM as getHHMMUtil,
+  isMarketClosed as isMarketClosedUtil,
+  isOpenToClose as isOpenToCloseUtil,
+  isTradingDay as isTradingDayUtil,
+  isTradingTime as isTradingTimeUtil,
+} from "../../utils/tradingTime";
 import type { KlineData } from "../../types";
 import "./index.css";
 
 // 判断A股是否已收盘（15:00收盘）
 const isMarketClosed = (): boolean => {
-  const now = new Date();
-  const closeTime = now.getHours() * 100 + now.getMinutes();
-  return closeTime >= 1500;
+  return isMarketClosedUtil(new Date());
 };
 
 const isTradingDay = (): boolean => {
-  const now = new Date();
-  return now.getDay() !== 0 && now.getDay() !== 6;
+  return isTradingDayUtil(new Date());
 };
 
-const getHHMM = (d: Date): number => d.getHours() * 100 + d.getMinutes();
+const getHHMM = (d: Date): number => getHHMMUtil(d);
 
 // 开盘到收盘（包含午休）：09:30-15:00
 const isOpenToClose = (): boolean => {
-  if (!isTradingDay()) return false;
-  const hhmm = getHHMM(new Date());
-  return hhmm >= 930 && hhmm < 1500;
+  return isOpenToCloseUtil(new Date());
 };
 
 // A股交易时段：09:30-11:30、13:00-15:00
 const isTradingTime = (): boolean => {
-  if (!isTradingDay()) return false;
-  const now = new Date();
-  const hhmm = getHHMM(now);
-  const morning = hhmm >= 930 && hhmm < 1130;
-  const afternoon = hhmm >= 1300 && hhmm < 1500;
-  return morning || afternoon;
+  return isTradingTimeUtil(new Date());
 };
 
 const TrendChart: React.FC = () => {
@@ -256,7 +253,7 @@ const TrendChart: React.FC = () => {
       const now = new Date();
       const todayStr = now.toISOString().split("T")[0];
       const hhmm = getHHMM(now);
-      const isTradingDayNow = now.getDay() !== 0 && now.getDay() !== 6;
+      const isTradingDayNow = isTradingDayUtil(now);
       const isIntradayNow = isTradingDayNow && hhmm >= 930 && hhmm < 1500;
       const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
 

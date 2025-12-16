@@ -8,6 +8,22 @@ services:
       - "127.0.0.1:8080:8080"  # 只绑定本地，由nginx代理
     env_file:
       - .env
+    environment:
+      - LLM_SAMPLES_PATH=/app/rag
+    volumes:
+      - /home/rainyday/data/rag:/app/rag
+    restart: always
+    networks:
+      - stock-network
+
+  sample-gen:
+    image: localhost:5000/stock-forecast-sample-gen:1.0.0
+    env_file:
+      - .env
+    environment:
+      - LLM_SAMPLES_PATH=/app/rag
+    volumes:
+      - /home/rainyday/data/rag:/app/rag
     restart: always
     networks:
       - stock-network
