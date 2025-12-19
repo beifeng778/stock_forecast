@@ -76,12 +76,18 @@ push-sample-gen:
 
 # 远程启动服务
 start-remote:
-	scp compose/docker-compose.yml backend/.env $(PROD_HOST):$(REMOTE_DIR)/
+	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
+	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/backend $(REMOTE_DIR)/sample-gen"
+	scp backend/.env $(PROD_HOST):$(REMOTE_DIR)/backend/
+	scp sample-gen/.env $(PROD_HOST):$(REMOTE_DIR)/sample-gen/
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate"
 
 # 远程仅重启 sample-gen
 start-remote-sample-gen:
-	scp compose/docker-compose.yml backend/.env $(PROD_HOST):$(REMOTE_DIR)/
+	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
+	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/backend $(REMOTE_DIR)/sample-gen"
+	scp backend/.env $(PROD_HOST):$(REMOTE_DIR)/backend/
+	scp sample-gen/.env $(PROD_HOST):$(REMOTE_DIR)/sample-gen/
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate sample-gen"
 
 # 部署数据库(Redis)
