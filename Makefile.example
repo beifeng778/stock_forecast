@@ -77,16 +77,14 @@ push-sample-gen:
 # 远程启动服务
 start-remote:
 	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
-	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/backend $(REMOTE_DIR)/sample-gen"
+	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/backend"
 	scp backend/.env $(PROD_HOST):$(REMOTE_DIR)/backend/
-	scp sample-gen/.env $(PROD_HOST):$(REMOTE_DIR)/sample-gen/
-	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate"
+	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate backend"
 
 # 远程仅重启 sample-gen
 start-remote-sample-gen:
 	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
-	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/backend $(REMOTE_DIR)/sample-gen"
-	scp backend/.env $(PROD_HOST):$(REMOTE_DIR)/backend/
+	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/sample-gen"
 	scp sample-gen/.env $(PROD_HOST):$(REMOTE_DIR)/sample-gen/
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate sample-gen"
 
@@ -99,7 +97,7 @@ deploy-db:
 	@echo "DB deployment completed"
 
 # 完整部署
-deploy: deploy-frontend deploy-db build-images push-images start-remote
+deploy: deploy-frontend build-images push-images start-remote
 	@echo "部署完成"
 
 # 仅部署 sample-gen
