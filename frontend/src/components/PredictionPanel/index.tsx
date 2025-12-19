@@ -56,7 +56,7 @@ const useDragScroll = (uniqueId?: string) => {
     // 确保元素有正确的样式
     element.style.cursor = "grab";
     element.style.userSelect = "none";
-    element.style.touchAction = "pan-y";
+    element.style.touchAction = "pan-x pinch-zoom";
     element.style.overflowX = "auto";
     element.style.scrollbarWidth = "none";
 
