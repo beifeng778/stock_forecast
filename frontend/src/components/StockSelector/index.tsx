@@ -390,8 +390,11 @@ const StockSelector: React.FC = () => {
                     {stock.market === "SH" ? "沪" : "深"}
                   </Tag>
                   <DeleteOutlined
-                    className="delete-icon"
-                    onClick={() => handleRemoveStock(stock.code)}
+                    className={`delete-icon ${loading || initialLoading ? 'disabled' : ''}`}
+                    onClick={() => {
+                      if (loading || initialLoading) return;
+                      handleRemoveStock(stock.code);
+                    }}
                   />
                 </div>
               ))
