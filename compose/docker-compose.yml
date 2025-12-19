@@ -17,6 +17,7 @@ services:
       - stock-network
 
   sample-gen:
+    container_name: stock-forecast-sample-gen
     image: localhost:5000/stock-forecast-sample-gen:1.0.0
     env_file:
       - sample-gen/.env
