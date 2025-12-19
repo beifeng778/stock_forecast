@@ -48,7 +48,7 @@ build-images:
 
 # 构建 sample-gen 镜像
 build-sample-gen:
-	docker build -t $(REGISTRY)/stock-forecast-sample-gen:$(VERSION) ./sample-gen
+	docker build -t $(REGISTRY)/stock-forecast-sample-gen:$(VERSION) -f sample-gen/Dockerfile .
 
 # 推送镜像到服务器
 push-images:
