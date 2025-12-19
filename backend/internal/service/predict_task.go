@@ -25,6 +25,8 @@ type PredictTaskStatus struct {
 type predictTask struct {
 	id        string
 	status    string
+	canceled  bool
+	requestID string
 	current   string
 	done      int
 	total     int
@@ -59,18 +61,7 @@ func CreatePredictTask(codes []string, period string, requestID string) (Predict
 	if requestID != "" {
 		if existingID, ok := requestTaskMap[requestID]; ok {
 			if t, ok2 := predictTasks[existingID]; ok2 && !t.expiresAt.IsZero() && now.Before(t.expiresAt) {
-				out := PredictTaskStatus{
-					TaskID:    t.id,
-					Status:    t.status,
-					Current:   t.current,
-					Done:      t.done,
-					Total:     t.total,
-					Error:     t.err,
-					ExpiresAt: t.expiresAt,
-				}
-				if t.status == "done" || t.status == "failed" {
-					out.Results = append([]model.PredictResult(nil), t.results...)
-				}
+				out := buildPredictTaskStatus(t)
 				predictTaskMu.Unlock()
 				return out, false, nil
 			}
@@ -89,6 +80,7 @@ func CreatePredictTask(codes []string, period string, requestID string) (Predict
 		err:       "",
 		createdAt: now,
 		expiresAt: now.Add(predictTaskTTL),
+		requestID: requestID,
 	}
 
 	predictTaskMu.Lock()
@@ -111,20 +103,38 @@ func GetPredictTaskStatus(taskID string) (PredictTaskStatus, bool) {
 		predictTaskMu.Unlock()
 		return PredictTaskStatus{}, false
 	}
-	out := PredictTaskStatus{
-		TaskID:    t.id,
-		Status:    t.status,
-		Current:   t.current,
-		Done:      t.done,
-		Total:     t.total,
-		Error:     t.err,
-		ExpiresAt: t.expiresAt,
-	}
-	if t.status == "done" || t.status == "failed" {
-		out.Results = append([]model.PredictResult(nil), t.results...)
-	}
+	out := buildPredictTaskStatus(t)
 	predictTaskMu.Unlock()
 	return out, true
+}
+
+func CancelPredictTask(taskID string) (PredictTaskStatus, bool) {
+	now := time.Now()
+	predictTaskMu.Lock()
+	cleanupExpiredLocked(now)
+	t, ok := predictTasks[taskID]
+	if !ok {
+		predictTaskMu.Unlock()
+		return PredictTaskStatus{}, false
+	}
+
+	switch t.status {
+	case "done", "failed", "canceled":
+		out := buildPredictTaskStatus(t)
+		predictTaskMu.Unlock()
+		return out, true
+	default:
+		t.canceled = true
+		t.status = "canceled"
+		t.err = "任务已取消"
+		t.current = ""
+		if t.requestID != "" {
+			delete(requestTaskMap, t.requestID)
+		}
+		out := buildPredictTaskStatus(t)
+		predictTaskMu.Unlock()
+		return out, true
+	}
 }
 
 func runPredictTask(t *predictTask, codes []string, period string) {
@@ -140,6 +150,15 @@ func runPredictTask(t *predictTask, codes []string, period string) {
 	results := make([]model.PredictResult, 0, len(codes))
 	for i, code := range codes {
 		predictTaskMu.Lock()
+		if t.canceled {
+			if t.status != "canceled" {
+				t.status = "canceled"
+				t.current = ""
+				t.err = "任务已取消"
+			}
+			predictTaskMu.Unlock()
+			return
+		}
 		t.current = code
 		predictTaskMu.Unlock()
 
@@ -157,6 +176,17 @@ func runPredictTask(t *predictTask, codes []string, period string) {
 		results = append(results, *res)
 
 		predictTaskMu.Lock()
+		if t.canceled {
+			t.status = "canceled"
+			t.current = ""
+			t.err = "任务已取消"
+			t.results = results
+			if t.requestID != "" {
+				delete(requestTaskMap, t.requestID)
+			}
+			predictTaskMu.Unlock()
+			return
+		}
 		t.done = i + 1
 		predictTaskMu.Unlock()
 	}
@@ -166,6 +196,9 @@ func runPredictTask(t *predictTask, codes []string, period string) {
 	t.results = results
 	t.done = len(codes)
 	t.current = ""
+	if t.requestID != "" {
+		delete(requestTaskMap, t.requestID)
+	}
 	predictTaskMu.Unlock()
 }
 
@@ -187,4 +220,20 @@ func newTaskID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func buildPredictTaskStatus(t *predictTask) PredictTaskStatus {
+	out := PredictTaskStatus{
+		TaskID:    t.id,
+		Status:    t.status,
+		Current:   t.current,
+		Done:      t.done,
+		Total:     t.total,
+		Error:     t.err,
+		ExpiresAt: t.expiresAt,
+	}
+	if t.status == "done" || t.status == "failed" {
+		out.Results = append([]model.PredictResult(nil), t.results...)
+	}
+	return out
 }

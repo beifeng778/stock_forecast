@@ -111,6 +111,11 @@ export async function predict(
       if (status?.status === "failed") {
         throw new Error(status.error || "预测失败");
       }
+      if (status?.status === "canceled") {
+        const err: any = new Error("预测已取消");
+        err.isCanceled = true;
+        throw err;
+      }
     } catch (e: any) {
       const httpStatus = e?.response?.status;
       if (httpStatus === 404) {
@@ -155,6 +160,11 @@ export interface SystemConfig {
 export async function getSystemConfig(): Promise<SystemConfig> {
   const response = await api.get("/config");
   return response.data;
+}
+
+// 取消预测任务
+export async function cancelPredict(taskId: string): Promise<void> {
+  await api.delete(`/predict/${taskId}`);
 }
 
 // 操作前验证token（用于没有接口的按钮）

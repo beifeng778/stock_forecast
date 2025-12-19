@@ -15,7 +15,12 @@ import {
   ReloadOutlined,
 } from "@ant-design/icons";
 import { useStockStore } from "../../store";
-import { getStocks, predict, validateBeforeAction } from "../../services/api";
+import {
+  getStocks,
+  predict,
+  validateBeforeAction,
+  cancelPredict,
+} from "../../services/api";
 import type { Stock } from "../../types";
 import "./index.css";
 
@@ -29,6 +34,8 @@ const StockSelector: React.FC = () => {
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchValue, setSearchValue] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [canceling, setCanceling] = useState(false);
+  const cancelRequestedRef = useRef(false);
 
   // 下拉框打开时阻止页面滚动
   useEffect(() => {
@@ -66,6 +73,8 @@ const StockSelector: React.FC = () => {
     setPredictMeta,
     setPredictProgress,
     predictProgress,
+    currentTaskId,
+    setCurrentTaskId,
     clearPredictions,
     clearTradeData,
     clearAllData,
@@ -94,6 +103,16 @@ const StockSelector: React.FC = () => {
     predict({
       ...predictMeta,
       onProgress: (status) => {
+        if (status?.task_id) {
+          setCurrentTaskId(status.task_id);
+        }
+        if (status?.status === "canceled") {
+          setPredictProgress(null);
+          setPredictInProgress(false);
+          setPredictMeta(null);
+          setLoading(false);
+          return;
+        }
         if (!requestId) return;
         setPredictProgress({
           request_id: requestId,
@@ -106,16 +125,25 @@ const StockSelector: React.FC = () => {
       .then((result) => {
         setPredictions(result.results);
         message.success("预测完成");
+        cancelRequestedRef.current = false;
       })
       .catch((error) => {
         console.error("预测失败:", error);
-        message.error("预测失败，请稍后重试");
+        if (error?.isCanceled) {
+          if (cancelRequestedRef.current) {
+            message.info(error.message || "预测已取消");
+          }
+        } else {
+          message.error("预测失败，请稍后重试");
+        }
+        cancelRequestedRef.current = false;
       })
       .finally(() => {
         setLoading(false);
         setPredictInProgress(false);
         setPredictMeta(null);
         setPredictProgress(null);
+        setCurrentTaskId(null);
       });
   }, [
     predictInProgress,
@@ -126,6 +154,7 @@ const StockSelector: React.FC = () => {
     setPredictInProgress,
     setPredictMeta,
     setPredictProgress,
+    setCurrentTaskId,
   ]);
 
   // 加载股票列表（始终从缓存获取）
@@ -216,6 +245,10 @@ const StockSelector: React.FC = () => {
 
   // 开始预测
   const handlePredict = async () => {
+    if (predictInProgress) {
+      message.info("预测正在进行，请稍候或先取消当前任务");
+      return;
+    }
     if (selectedStocks.length === 0) {
       message.warning("请先选择股票");
       return;
@@ -240,9 +273,33 @@ const StockSelector: React.FC = () => {
       done: 0,
       total: selectedStocks.length,
     });
+    setCurrentTaskId(null);
 
     // 统一由上面的 useEffect 触发 predict + 轮询，避免重复启动造成请求风暴
     setLoading(true);
+  };
+
+  const handleCancelPredict = async () => {
+    if (!currentTaskId) {
+      message.warning("当前没有可取消的预测任务");
+      return;
+    }
+    if (canceling) return;
+
+    const valid = await validateBeforeAction();
+    if (!valid) return;
+
+    cancelRequestedRef.current = true;
+    setCanceling(true);
+    try {
+      await cancelPredict(currentTaskId);
+    } catch (error) {
+      console.error("取消预测失败:", error);
+      cancelRequestedRef.current = false;
+      message.error("取消预测失败，请稍后重试");
+    } finally {
+      setCanceling(false);
+    }
   };
 
   // 移除股票（带二次确认）
@@ -390,7 +447,9 @@ const StockSelector: React.FC = () => {
                     {stock.market === "SH" ? "沪" : "深"}
                   </Tag>
                   <DeleteOutlined
-                    className={`delete-icon ${loading || initialLoading ? 'disabled' : ''}`}
+                    className={`delete-icon ${
+                      loading || initialLoading ? "disabled" : ""
+                    }`}
                     onClick={() => {
                       if (loading || initialLoading) return;
                       handleRemoveStock(stock.code);
@@ -418,11 +477,22 @@ const StockSelector: React.FC = () => {
             disabled={
               selectedStocks.length === 0 ||
               initialLoading ||
-              allStocks.length === 0
+              allStocks.length === 0 ||
+              predictInProgress
             }
           >
             开始预测
           </Button>
+          {predictInProgress && (
+            <Button
+              danger
+              onClick={handleCancelPredict}
+              loading={canceling}
+              disabled={canceling}
+            >
+              取消预测
+            </Button>
+          )}
         </Space>
       </div>
     </div>

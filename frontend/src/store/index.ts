@@ -82,6 +82,10 @@ interface StockStore {
     } | null
   ) => void;
 
+  // 当前任务ID（用于取消预测）
+  currentTaskId: string | null;
+  setCurrentTaskId: (taskId: string | null) => void;
+
   // 已预测的股票代码（用于委托模拟筛选）
   predictedCodes: string[];
 
@@ -185,9 +189,15 @@ export const useStockStore = create<StockStore>()(
           predictInProgress: false,
           predictMeta: null,
           predictProgress: null,
+          currentTaskId: null,
         });
       },
-      clearPredictions: () => set({ predictions: [], predictedCodes: [] }),
+      clearPredictions: () =>
+        set({
+          predictions: [],
+          predictedCodes: [],
+          currentTaskId: null,
+        }),
 
       loading: false,
       setLoading: (loading) => set({ loading }),
@@ -199,6 +209,9 @@ export const useStockStore = create<StockStore>()(
 
       predictProgress: null,
       setPredictProgress: (progress) => set({ predictProgress: progress }),
+
+      currentTaskId: null,
+      setCurrentTaskId: (taskId) => set({ currentTaskId: taskId }),
 
       predictedCodes: [],
 
@@ -236,6 +249,7 @@ export const useStockStore = create<StockStore>()(
           predictInProgress: false,
           predictMeta: null,
           predictProgress: null,
+          currentTaskId: null,
           tradeFormData: { quantity: 100 },
           tradeResult: null,
           tradeHasFutureDate: false,
@@ -252,6 +266,7 @@ export const useStockStore = create<StockStore>()(
         predictInProgress: state.predictInProgress,
         predictMeta: state.predictMeta,
         predictProgress: state.predictProgress,
+        currentTaskId: state.currentTaskId,
         tradeFormData: state.tradeFormData,
         tradeResult: state.tradeResult,
         tradeHasFutureDate: state.tradeHasFutureDate,

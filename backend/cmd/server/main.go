@@ -92,6 +92,7 @@ func main() {
 			// 预测相关
 			protected.POST("/predict", handler.Predict)
 			protected.GET("/predict/:task_id", handler.GetPredictTask)
+			protected.DELETE("/predict/:task_id", handler.CancelPredictTask)
 
 			// 委托模拟
 			protected.POST("/trade/simulate", handler.SimulateTrade)

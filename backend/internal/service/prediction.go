@@ -1346,8 +1346,16 @@ func generateNewsAnalysis(newsImpact langchain.NewsImpact, news []langchain.News
 			priceImpactDesc = "轻微"
 		}
 
-		analysis += fmt.Sprintf("**影响评估**：%s消息，重要性等级%s，预期对股价产生%s影响（约%.1f%%）\n\n",
-			sentiment, impactDesc, priceImpactDesc, priceImpactPercent)
+		analysis += fmt.Sprintf("**影响评估**：%s消息，重要性等级%s，预期对股价产生%s影响。\n\n- 综合判断：该消息面将可能对股价产生%s驱动，请结合技术信号确认节奏。\n\n",
+			sentiment, impactDesc, priceImpactDesc,
+			func() string {
+				if newsImpact.PriceImpact > 0 {
+					return "上行"
+				} else if newsImpact.PriceImpact < 0 {
+					return "下行"
+				}
+				return "有限"
+			}())
 	}
 
 	// 最新消息列表
@@ -1363,16 +1371,28 @@ func generateNewsAnalysis(newsImpact langchain.NewsImpact, news []langchain.News
 	if newsImpact.ImportanceLevel >= 3 {
 		analysis += "\n**投资提示**：\n"
 		if newsImpact.SentimentScore > 0.5 {
-			analysis += "- 重要利好消息可能推动股价上涨，建议关注放量突破\n"
-			analysis += "- 注意消息兑现后的获利回吐风险"
+			analysis += "- 重要利好消息可能推动股价上涨，建议关注放量突破。\n"
+			analysis += "- 注意消息兑现后的获利回吐风险。"
 		} else if newsImpact.SentimentScore < -0.5 {
-			analysis += "- 重要利空消息可能施压股价，建议谨慎操作\n"
-			analysis += "- 关注是否出现超跌反弹机会"
+			analysis += "- 重要利空消息可能施压股价，建议谨慎操作。\n"
+			analysis += "- 关注是否出现超跌反弹机会。"
 		} else {
-			analysis += "- 消息面影响相对中性，以技术面分析为主"
+			analysis += "- 消息面影响相对中性，以技术面分析为主。"
 		}
 	} else {
-		analysis += "\n**投资提示**：\n\n- 消息面影响有限，建议重点关注技术面信号。"
+		priceImpactAbs := math.Abs(newsImpact.PriceImpact)
+		analysis += "\n**投资提示**：\n"
+		if priceImpactAbs >= 0.03 {
+			if newsImpact.SentimentScore > 0.2 {
+				analysis += "- 消息面对股价可能产生一定驱动，可结合技术信号择机参与。\n"
+			} else if newsImpact.SentimentScore < -0.2 {
+				analysis += "- 消息面或对股价造成阶段性压力，关注量价是否出现企稳迹象。\n"
+			} else {
+				analysis += "- 消息面影响为中性，建议结合技术面信号确认方向。\n"
+			}
+		} else {
+			analysis += "- 消息面影响有限，建议重点关注技术面信号。"
+		}
 	}
 
 	return analysis
