@@ -3,6 +3,7 @@ package model
 // PredictRequest 预测请求
 type PredictRequest struct {
 	StockCodes []string `json:"stock_codes" binding:"required"`
+	RequestID  string   `json:"request_id"`
 	Period     string   `json:"period"` // daily, weekly, monthly
 }
 

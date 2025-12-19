@@ -65,8 +65,60 @@ export async function getKline(
 export async function predict(
   request: PredictRequest
 ): Promise<PredictResponse> {
-  const response = await api.post("/predict", request);
-  return response.data;
+  const createResp = await api.post("/predict", request);
+  const onProgress: ((status: any) => void) | undefined = (request as any)
+    ?.onProgress;
+  const taskId: string | undefined = createResp.data?.task_id;
+  if (!taskId) {
+    throw new Error("预测任务创建失败：缺少task_id");
+  }
+
+  if (onProgress) {
+    onProgress(createResp.data);
+  }
+
+  if (createResp.data?.status === "done") {
+    return { results: createResp.data?.results || [] };
+  }
+  if (createResp.data?.status === "failed") {
+    throw new Error(createResp.data?.error || "预测失败");
+  }
+
+  const start = Date.now();
+  const maxWaitMs = 25 * 60 * 1000;
+
+  // 轮询任务状态
+  while (true) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error("预测超时，请稍后重试");
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 800));
+
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const statusResp = await api.get(`/predict/${taskId}`);
+      const status = statusResp.data;
+
+      if (onProgress) {
+        onProgress(status);
+      }
+
+      if (status?.status === "done") {
+        return { results: status.results || [] };
+      }
+      if (status?.status === "failed") {
+        throw new Error(status.error || "预测失败");
+      }
+    } catch (e: any) {
+      const httpStatus = e?.response?.status;
+      if (httpStatus === 404) {
+        throw new Error("预测任务不存在或已过期");
+      }
+      throw e;
+    }
+  }
 }
 
 // 委托模拟

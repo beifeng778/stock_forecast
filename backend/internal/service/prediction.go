@@ -3,8 +3,10 @@ package service
 import (
 	"fmt"
 	"hash/fnv"
+	"log"
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,57 @@ func seedFromString(s string) int64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(s))
 	return int64(h.Sum64())
+}
+
+func normalizeNewsTitleKey(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "")
+	s = strings.ReplaceAll(s, "\t", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
+func mergeNewsForLLM(ann []langchain.NewsItem, media []langchain.NewsItem, totalLimit int) []langchain.NewsItem {
+	if totalLimit <= 0 {
+		totalLimit = 15
+	}
+
+	seen := make(map[string]struct{}, len(ann)+len(media))
+	out := make([]langchain.NewsItem, 0, totalLimit)
+	push := func(n langchain.NewsItem) {
+		if len(out) >= totalLimit {
+			return
+		}
+		key := normalizeNewsTitleKey(n.Title)
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, n)
+	}
+
+	for _, n := range ann {
+		push(n)
+	}
+	for _, n := range media {
+		push(n)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Time != out[j].Time {
+			return out[i].Time > out[j].Time
+		}
+		return out[i].Title > out[j].Title
+	})
+
+	if len(out) > totalLimit {
+		out = out[:totalLimit]
+	}
+	return out
 }
 
 func getDailyPriceLimitPercent(stockCode, stockName string) float64 {
@@ -75,6 +128,69 @@ func clampKlineToLimit(prevClose, limit float64, open, high, low, close *float64
 	}
 }
 
+func sanitizeLLMKlines(stockCode, stockName string, prevClose float64, in []model.KlineData) []model.KlineData {
+	if len(in) == 0 {
+		return in
+	}
+	cap := getDailyPriceLimitPercent(stockCode, stockName)
+	out := make([]model.KlineData, 0, len(in))
+	pc := prevClose
+	for _, k := range in {
+		open := k.Open
+		high := k.High
+		low := k.Low
+		close := k.Close
+		if pc <= 0 {
+			if close > 0 {
+				pc = close
+			} else {
+				continue
+			}
+		}
+		if open <= 0 {
+			open = pc
+		}
+		if close <= 0 {
+			close = pc
+		}
+		if high <= 0 {
+			high = math.Max(open, close)
+		}
+		if low <= 0 {
+			low = math.Min(open, close)
+		}
+		clampKlineToLimit(pc, cap, &open, &high, &low, &close)
+		high = math.Max(high, math.Max(open, close))
+		low = math.Min(low, math.Min(open, close))
+		if high < low {
+			high = math.Max(open, close)
+			low = math.Min(open, close)
+			clampKlineToLimit(pc, cap, &open, &high, &low, &close)
+			high = math.Max(high, math.Max(open, close))
+			low = math.Min(low, math.Min(open, close))
+		}
+		k.Open = round4(open)
+		k.Close = round4(close)
+		k.High = round4(high)
+		k.Low = round4(low)
+		out = append(out, k)
+		pc = k.Close
+	}
+	return out
+}
+
+func sanitizeLLMToday(stockCode, stockName string, prevClose float64, in *model.KlineData) *model.KlineData {
+	if in == nil {
+		return nil
+	}
+	ks := sanitizeLLMKlines(stockCode, stockName, prevClose, []model.KlineData{*in})
+	if len(ks) == 0 {
+		return nil
+	}
+	out := ks[0]
+	return &out
+}
+
 func isTradingTimeNow() bool {
 	now := time.Now()
 	wd := now.Weekday()
@@ -87,18 +203,46 @@ func isTradingTimeNow() bool {
 	return morning || afternoon
 }
 
+func isTradingDayNow() bool {
+	now := time.Now()
+	wd := now.Weekday()
+	return wd != time.Saturday && wd != time.Sunday
+}
+
+func isDailyKlineOHLCVComplete(d stockdata.KlineData) bool {
+	if d.Open <= 0 || d.Close <= 0 || d.High <= 0 || d.Low <= 0 {
+		return false
+	}
+	if d.Volume < 0 {
+		return false
+	}
+	if d.High < d.Low {
+		return false
+	}
+	return true
+}
+
 // PredictStocks 批量预测股票（保持原始顺序）
 func PredictStocks(codes []string, period string) ([]model.PredictResult, error) {
 	results := make([]*model.PredictResult, len(codes))
 	errors := make([]error, len(codes))
 	var wg sync.WaitGroup
+	isBatch := len(codes) > 1
+	var sem chan struct{}
+	if isBatch {
+		sem = make(chan struct{}, 4)
+	}
 
 	for i, code := range codes {
 		wg.Add(1)
 		go func(idx int, stockCode string) {
 			defer wg.Done()
+			if sem != nil {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+			}
 
-			result, err := predictSingleStock(stockCode, period)
+			result, err := predictSingleStock(stockCode, period, isBatch)
 			if err != nil {
 				errors[idx] = fmt.Errorf("预测 %s 失败: %v", stockCode, err)
 				return
@@ -128,7 +272,7 @@ func PredictStocks(codes []string, period string) ([]model.PredictResult, error)
 }
 
 // predictSingleStock 预测单只股票
-func predictSingleStock(code, period string) (*model.PredictResult, error) {
+func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult, error) {
 	// 1. 获取股票信息（名称和行业）
 	stockInfo, err := stockdata.GetStockInfo(code)
 	stockName := "未知"
@@ -143,7 +287,7 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		industry = stockdata.GetStockIndustry(code)
 	}
 	// 如果东方财富也获取失败，使用LLM获取板块和行业
-	if (sector == "" || industry == "") && stockName != "未知" {
+	if !isBatch && (sector == "" || industry == "") && stockName != "未知" {
 		classification := langchain.GetStockClassification(code, stockName)
 		if sector == "" {
 			sector = classification.Sector
@@ -154,8 +298,8 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	}
 
 	// 2. 获取技术指标
-	isIntraday := isTradingTimeNow()
-	kline, err := stockdata.GetKlineWithRefresh(code, "daily", isIntraday)
+	isTradingTime := isTradingTimeNow()
+	kline, err := stockdata.GetKlineWithRefresh(code, "daily", isTradingTime)
 	if err != nil {
 		return nil, fmt.Errorf("获取技术指标失败: %v", err)
 	}
@@ -163,8 +307,20 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		return nil, fmt.Errorf("获取技术指标失败: 返回数据为空")
 	}
 
-	// 3. 转换技术指标
-	indicators, err := stockdata.CalculateIndicators(kline.Data)
+	now := time.Now()
+	todayStr := now.Format("2006-01-02")
+	hhmm := now.Hour()*100 + now.Minute()
+	last := kline.Data[len(kline.Data)-1]
+	hasTodayData := last.Date == todayStr
+	todayKlineComplete := hasTodayData && hhmm >= 1500 && isDailyKlineOHLCVComplete(last)
+
+	// 3. 转换技术指标（盘中/当日未收盘：仅用历史完整日K）
+	klineForAnalysis := kline.Data
+	if hasTodayData && !todayKlineComplete && len(klineForAnalysis) >= 2 {
+		klineForAnalysis = klineForAnalysis[:len(klineForAnalysis)-1]
+	}
+
+	indicators, err := stockdata.CalculateIndicators(klineForAnalysis)
 	if err != nil {
 		return nil, fmt.Errorf("获取技术指标失败: %v", err)
 	}
@@ -172,11 +328,8 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		return nil, fmt.Errorf("获取技术指标失败: 返回数据为空")
 	}
 
-	now := time.Now()
-	todayStr := now.Format("2006-01-02")
-	last := kline.Data[len(kline.Data)-1]
-	hasTodayData := last.Date == todayStr
-	needPredictToday := isIntraday && !hasTodayData
+	isIntradayCard := isTradingDayNow() && !todayKlineComplete
+	needPredictToday := isTradingDayNow() && !todayKlineComplete
 
 	var indicatorsForTodayPred *stockdata.Indicators
 	if hasTodayData && len(kline.Data) >= 2 {
@@ -189,39 +342,46 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	signals := convertSignals(indicators.Signals)
 	signalsForTodayPred := signals
 
-	// 5. 获取股票新闻
-	newsItems, _ := stockdata.GetStockNews(code, 5)
-	news := make([]langchain.NewsItem, len(newsItems))
-	for i, n := range newsItems {
-		news[i] = langchain.NewsItem{Title: n.Title, Time: n.Time, Source: n.Source}
-	}
-
-	// 6. 分析新闻对股价的量化影响
-	newsImpact := langchain.AnalyzeNewsImpact(code, stockName, news)
-
-	// 7. 基于技术指标生成简化的ML预测（不再依赖Python服务）
+	// 5-10. 批量预测加速：跳过所有 LLM 调用，仅使用本地逻辑
+	var news []langchain.NewsItem
+	var newsImpact langchain.NewsImpact
 	mlPredictions := generateMLPredictions(indicators)
+	analysis := ""
+	newsAnalysis := ""
+	if isBatch {
+		analysis = "批量模式为加速已跳过详细AI分析，点进单股查看"
+	} else {
+		annItems, _ := stockdata.GetStockNews(code, 5)
+		mediaItems, _ := stockdata.GetStockMediaNews(code, 10)
 
-	// 8. 使用LangChain进行综合分析（包含新闻）
-	analysis, err := langchain.AnalyzeStock(code, stockName, techIndicators, mlPredictions, signals, news)
-	if err != nil {
-		analysis = "AI分析暂时不可用"
+		annNews := make([]langchain.NewsItem, 0, len(annItems))
+		for _, n := range annItems {
+			annNews = append(annNews, langchain.NewsItem{Title: n.Title, Time: n.Time, Source: "公告"})
+		}
+		mediaNews := make([]langchain.NewsItem, 0, len(mediaItems))
+		for _, n := range mediaItems {
+			mediaNews = append(mediaNews, langchain.NewsItem{Title: n.Title, Time: n.Time, Source: "新闻"})
+		}
+		news = mergeNewsForLLM(annNews, mediaNews, 15)
+
+		newsImpact = langchain.AnalyzeNewsImpact(code, stockName, news)
+		analysis, err = langchain.AnalyzeStock(code, stockName, techIndicators, mlPredictions, signals, news)
+		if err != nil {
+			analysis = "AI分析暂时不可用"
+		}
+		newsAnalysis = generateNewsAnalysis(newsImpact, news)
 	}
-	if isIntraday {
-		analysis = "盘中未收盘（已实时刷新第三方日K）：\n\n" + analysis
+	if needPredictToday {
+		analysis = "盘中（当日K线未就绪，分析仅使用历史完整日K）：\n\n" + analysis
+	} else if hasTodayData && !todayKlineComplete {
+		analysis = "当日K线数据不完整（分析仅使用历史完整日K）：\n\n" + analysis
 	}
 
-	// 8.1. 生成专门的消息面分析
-	newsAnalysis := generateNewsAnalysis(newsImpact, news)
-
-	// 9. 综合判断趋势（融入新闻影响）
 	trend, trendCN, confidence := determineTrendWithNews(mlPredictions, signals, newsImpact)
-
-	// 10. 计算目标价位（考虑新闻影响）
 	targetPrices := calculateTargetPricesWithNews(indicators.CurrentPrice, trend, confidence, newsImpact)
 
-	// 10. 获取近期每日涨跌幅
-	dailyChanges := getDailyChangesFromKline(kline.Data, 10)
+	// 10. 获取近期每日涨跌幅（同样只用完整日K）
+	dailyChanges := getDailyChangesFromKline(klineForAnalysis, 10)
 
 	confidenceForTodayPred := confidence
 	targetPricesForTodayPred := targetPrices
@@ -240,49 +400,115 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 	}
 
 	var aiToday *model.KlineData
-	if hasTodayData {
+	if needPredictToday {
+		aiToday = generateTodayKline(code, stockName, kline.Data, targetPricesForTodayPred.Short, supportForTodayPred, resistanceForTodayPred, confidenceForTodayPred, volatilityForTodayPred)
+	} else if hasTodayData {
 		aiToday = generateTodayKline(code, stockName, kline.Data, targetPricesForTodayPred.Short, supportForTodayPred, resistanceForTodayPred, confidenceForTodayPred, volatilityForTodayPred)
 	}
 
-	futureKlines := generateFutureKlines(code, stockName, kline.Data, isIntraday, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
+	futureKlines := generateFutureKlines(code, stockName, kline.Data, isTradingTime, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
 
 	// 11. 使用LLM生成结构化OHLCV预测（ai_today + future_klines），失败则回退本地预测
-	llmIndicators := techIndicators
-	llmSignals := signals
-	if indicatorsForTodayPred != nil {
-		llmIndicators = convertIndicators(indicatorsForTodayPred)
-		llmSignals = signalsForTodayPred
-	}
-
-	llmHistorySrc := kline.Data
-	if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr {
-		llmHistorySrc = llmHistorySrc[:len(llmHistorySrc)-1]
-	}
-	llmHistory := make([]model.KlineData, 0, len(llmHistorySrc))
-	for _, d := range llmHistorySrc {
-		llmHistory = append(llmHistory, model.KlineData{
-			Date:   d.Date,
-			Open:   d.Open,
-			Close:  d.Close,
-			High:   d.High,
-			Low:    d.Low,
-			Volume: d.Volume,
-			Amount: d.Amount,
-		})
-	}
-
-	hasTodayActual := hasTodayData && !isIntraday
-	llmAiToday, llmFutureKlines, llmErr := langchain.PredictOHLCV(code, stockName, todayStr, hasTodayActual, needPredictToday, llmIndicators, llmSignals, news, llmHistory)
-	if llmErr == nil && len(llmFutureKlines) > 0 {
-		if llmAiToday != nil {
-			aiToday = llmAiToday
+	if isBatch {
+		llmIndicators := techIndicators
+		llmSignals := signals
+		if indicatorsForTodayPred != nil && (!todayKlineComplete || needPredictToday) {
+			llmIndicators = convertIndicators(indicatorsForTodayPred)
+			llmSignals = signalsForTodayPred
 		}
-		futureKlines = llmFutureKlines
-		if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
-			targetPrices.Short = llmFutureKlines[len(llmFutureKlines)-1].Close
+
+		llmHistorySrc := kline.Data
+		if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr && !todayKlineComplete {
+			llmHistorySrc = llmHistorySrc[:len(llmHistorySrc)-1]
 		}
-	} else if llmErr != nil {
-		fmt.Printf("[LLM] PredictOHLCV失败(%s): %v\n", code, llmErr)
+		llmHistory := make([]model.KlineData, 0, len(llmHistorySrc))
+		for _, d := range llmHistorySrc {
+			llmHistory = append(llmHistory, model.KlineData{
+				Date:   d.Date,
+				Open:   d.Open,
+				Close:  d.Close,
+				High:   d.High,
+				Low:    d.Low,
+				Volume: d.Volume,
+				Amount: d.Amount,
+			})
+		}
+
+		hasTodayActual := todayKlineComplete
+		llmAiToday, llmFutureKlines, llmErr := langchain.PredictOHLCVWithOptions(
+			code,
+			stockName,
+			todayStr,
+			hasTodayActual,
+			needPredictToday,
+			llmIndicators,
+			llmSignals,
+			nil,
+			llmHistory,
+			langchain.OHLCVOptions{AllowRetry: false, Timeout: 12 * time.Second, RetryTimeout: 0},
+		)
+		if llmErr == nil && len(llmFutureKlines) > 0 {
+			prevCloseForLLM := 0.0
+			if len(llmHistory) > 0 {
+				prevCloseForLLM = llmHistory[len(llmHistory)-1].Close
+			}
+			llmAiToday = sanitizeLLMToday(code, stockName, prevCloseForLLM, llmAiToday)
+			llmFutureKlines = sanitizeLLMKlines(code, stockName, prevCloseForLLM, llmFutureKlines)
+			if llmAiToday != nil {
+				aiToday = llmAiToday
+			}
+			futureKlines = llmFutureKlines
+			if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
+				targetPrices.Short = llmFutureKlines[len(llmFutureKlines)-1].Close
+			}
+		} else if llmErr != nil {
+			log.Printf("[ERROR][LLM] PredictOHLCV失败(%s): %v", code, llmErr)
+		}
+	} else {
+		llmIndicators := techIndicators
+		llmSignals := signals
+		if indicatorsForTodayPred != nil && (!todayKlineComplete || needPredictToday) {
+			llmIndicators = convertIndicators(indicatorsForTodayPred)
+			llmSignals = signalsForTodayPred
+		}
+
+		llmHistorySrc := kline.Data
+		if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr && !todayKlineComplete {
+			llmHistorySrc = llmHistorySrc[:len(llmHistorySrc)-1]
+		}
+		llmHistory := make([]model.KlineData, 0, len(llmHistorySrc))
+		for _, d := range llmHistorySrc {
+			llmHistory = append(llmHistory, model.KlineData{
+				Date:   d.Date,
+				Open:   d.Open,
+				Close:  d.Close,
+				High:   d.High,
+				Low:    d.Low,
+				Volume: d.Volume,
+				Amount: d.Amount,
+			})
+		}
+
+		hasTodayActual := todayKlineComplete
+		llmAiToday, llmFutureKlines, llmErr := langchain.PredictOHLCV(code, stockName, todayStr, hasTodayActual, needPredictToday, llmIndicators, llmSignals, news, llmHistory)
+		if llmErr == nil && len(llmFutureKlines) > 0 {
+			prevCloseForLLM := 0.0
+			if len(llmHistory) > 0 {
+				prevCloseForLLM = llmHistory[len(llmHistory)-1].Close
+			}
+			llmAiToday = sanitizeLLMToday(code, stockName, prevCloseForLLM, llmAiToday)
+			llmFutureKlines = sanitizeLLMKlines(code, stockName, prevCloseForLLM, llmFutureKlines)
+
+			if llmAiToday != nil {
+				aiToday = llmAiToday
+			}
+			futureKlines = llmFutureKlines
+			if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
+				targetPrices.Short = llmFutureKlines[len(llmFutureKlines)-1].Close
+			}
+		} else if llmErr != nil {
+			log.Printf("[ERROR][LLM] PredictOHLCV失败(%s): %v", code, llmErr)
+		}
 	}
 
 	return &model.PredictResult{
@@ -290,7 +516,7 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 		StockName:    stockName,
 		Sector:       sector,
 		Industry:     industry,
-		IsIntraday:   isIntraday,
+		IsIntraday:   isIntradayCard,
 		CurrentPrice: indicators.CurrentPrice,
 		Trend:        trend,
 		TrendCN:      trendCN,
@@ -315,20 +541,35 @@ func predictSingleStock(code, period string) (*model.PredictResult, error) {
 }
 
 func generateTodayKline(stockCode, stockName string, history []stockdata.KlineData, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) *model.KlineData {
-	if len(history) < 2 {
+	if len(history) < 1 {
 		return nil
 	}
 
 	now := time.Now()
 	todayStr := now.Format("2006-01-02")
 	last := history[len(history)-1]
-	if last.Date != todayStr {
+	if last.Date == todayStr && len(history) < 2 {
 		return nil
 	}
 
-	prevDay := history[len(history)-2]
+	todayDate, err1 := time.Parse("2006-01-02", todayStr)
+	lastDate, err2 := time.Parse("2006-01-02", last.Date)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+	if lastDate.After(todayDate) {
+		return nil
+	}
+	if todayDate.Sub(lastDate) > 7*24*time.Hour {
+		return nil
+	}
 
-	anchorClose := history[len(history)-2].Close
+	prevDay := last
+	anchorClose := last.Close
+	if last.Date == todayStr {
+		prevDay = history[len(history)-2]
+		anchorClose = prevDay.Close
+	}
 	if anchorClose <= 0 {
 		return nil
 	}

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,8 @@ type Options struct {
 	RetryCount       int
 	RetryIntervalMin int
 	Enabled          bool
+	Rebuild          bool
+	Debug            bool
 }
 
 func Execute(args []string) error {
@@ -47,7 +50,7 @@ func Execute(args []string) error {
 
 	opts.Enabled = getEnvBool("LLM_SAMPLE_GEN_ENABLED", true)
 	if !opts.Enabled {
-		log.Println("sample-gen disabled")
+		samplegenInfof("disabled")
 		return nil
 	}
 
@@ -79,9 +82,15 @@ func Execute(args []string) error {
 	opts.RunOnStartup = getEnvBool("LLM_SAMPLE_GEN_ON_STARTUP", false)
 	opts.RetryCount = getEnvInt("LLM_SAMPLE_GEN_RETRY_COUNT", 3)
 	opts.RetryIntervalMin = getEnvInt("LLM_SAMPLE_GEN_RETRY_INTERVAL", 10)
+	opts.Rebuild = getEnvBool("LLM_SAMPLE_GEN_REBUILD", false)
+	opts.Debug = getEnvBool("LLM_SAMPLE_GEN_DEBUG", false)
 
 	if opts.Daemon {
-		log.Printf("sample-gen daemon mode: output=%s, time=%s, on_startup=%v", opts.OutputPath, opts.RunAt, opts.RunOnStartup)
+		mode := "incremental"
+		if opts.Rebuild {
+			mode = "rebuild"
+		}
+		samplegenInfof("daemon mode: mode=%s, output=%s, time=%s, on_startup=%v", mode, opts.OutputPath, opts.RunAt, opts.RunOnStartup)
 		RunDailyDaemon(opts)
 		return nil
 	}
@@ -90,7 +99,7 @@ func Execute(args []string) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("完成: output=%s, rows=%d", opts.OutputPath, lines)
+	samplegenInfof("done: output=%s, rows=%d", opts.OutputPath, lines)
 	return nil
 }
 
@@ -111,7 +120,7 @@ func RunDailyDaemon(opts Options) {
 			nextRun = nextRun.Add(24 * time.Hour)
 		}
 		d := nextRun.Sub(now)
-		log.Printf("下次样本生成时间: %s（%v后）", nextRun.Format("2006-01-02 15:04:05"), d.Round(time.Minute))
+		samplegenInfof("next run: %s (in %v)", nextRun.Format("2006-01-02 15:04:05"), d.Round(time.Minute))
 		time.Sleep(d)
 		runWithRetry(opts)
 	}
@@ -120,26 +129,34 @@ func RunDailyDaemon(opts Options) {
 func runWithRetry(opts Options) {
 	for i := 0; i <= opts.RetryCount; i++ {
 		if i > 0 {
-			log.Printf("第 %d 次重试生成样本...", i)
+			samplegenInfof("retry=%d", i)
 		} else {
-			log.Println("开始生成样本...")
+			samplegenInfof("start")
 		}
 
 		rows, err := GenerateOnce(opts)
 		if err == nil {
-			log.Printf("样本生成完成: output=%s, rows=%d", opts.OutputPath, rows)
+			samplegenInfof("done: output=%s, rows=%d", opts.OutputPath, rows)
 			return
 		}
-		log.Printf("生成样本失败: %v", err)
+		samplegenErrorf("failed: %v", err)
 		if i < opts.RetryCount {
-			log.Printf("将在 %d 分钟后重试", opts.RetryIntervalMin)
+			samplegenInfof("retry in %d min", opts.RetryIntervalMin)
 			time.Sleep(time.Duration(opts.RetryIntervalMin) * time.Minute)
 		}
 	}
-	log.Printf("生成样本失败，已重试 %d 次", opts.RetryCount)
+	samplegenErrorf("failed after retries=%d", opts.RetryCount)
 }
 
 func GenerateOnce(opts Options) (int, error) {
+	if opts.Rebuild {
+		return generateRebuild(opts)
+	}
+	return generateIncremental(opts)
+}
+
+func generateRebuild(opts Options) (int, error) {
+	samplegenInfof("start: mode=rebuild, output=%s, max_stocks=%d, days=%d, min_history=%d, debug=%v", opts.OutputPath, opts.MaxStocks, opts.DaysPerStock, opts.MinHistoryLen, opts.Debug)
 	if err := os.MkdirAll(filepath.Dir(opts.OutputPath), 0o755); err != nil {
 		return 0, fmt.Errorf("创建输出目录失败: %w", err)
 	}
@@ -189,15 +206,20 @@ INSERT OR REPLACE INTO llm_samples(
 		_ = db.Close()
 		return 0, err
 	}
+	sort.Slice(stocks, func(i, j int) bool { return stocks[i].Code < stocks[j].Code })
 	if opts.MaxStocks > 0 && opts.MaxStocks < len(stocks) {
 		stocks = stocks[:opts.MaxStocks]
 	}
 
 	written := 0
+	stocksWritten := 0
+	stocksSkipped := 0
 	startAt := time.Now()
 	for idx, s := range stocks {
 		kline, err := stockdata.GetKline(s.Code, "daily")
 		if err != nil || kline == nil || len(kline.Data) < opts.MinHistoryLen+6 {
+			stocksSkipped++
+			samplegenDebugf(opts.Debug, "skip stock=%s reason=insufficient_kline", s.Code)
 			continue
 		}
 
@@ -213,8 +235,14 @@ INSERT OR REPLACE INTO llm_samples(
 			start = opts.MinHistoryLen
 		}
 		if start > end {
+			stocksSkipped++
+			if opts.Debug {
+				log.Printf("[sample-gen] skip stock=%s reason=no_valid_window", s.Code)
+			}
 			continue
 		}
+
+		stockStartWritten := written
 
 		for i := start; i <= end; i++ {
 			baseClose := kline.Data[i-1].Close
@@ -249,9 +277,15 @@ INSERT OR REPLACE INTO llm_samples(
 			written++
 		}
 
+		stockWritten := written - stockStartWritten
+		if stockWritten > 0 {
+			stocksWritten++
+		}
+		samplegenDebugf(opts.Debug, "stock=%s wrote=%d", s.Code, stockWritten)
+
 		if (idx+1)%50 == 0 {
 			elapsed := time.Since(startAt)
-			fmt.Printf("进度: %d/%d stocks, rows=%d, elapsed=%s\n", idx+1, len(stocks), written, elapsed.Truncate(time.Second))
+			samplegenInfof("progress: %d/%d stocks, rows=%d, elapsed=%s", idx+1, len(stocks), written, elapsed.Truncate(time.Second))
 		}
 	}
 
@@ -268,7 +302,206 @@ INSERT OR REPLACE INTO llm_samples(
 		_ = os.Remove(tmpPath)
 		return 0, err
 	}
+	samplegenInfof("done: mode=rebuild, stocks=%d, stocks_written=%d, stocks_skipped=%d, rows=%d, elapsed=%s", len(stocks), stocksWritten, stocksSkipped, written, time.Since(startAt).Truncate(time.Second))
 	return written, nil
+}
+
+func generateIncremental(opts Options) (int, error) {
+	samplegenInfof("start: mode=incremental, output=%s, max_stocks=%d, days=%d, min_history=%d, debug=%v", opts.OutputPath, opts.MaxStocks, opts.DaysPerStock, opts.MinHistoryLen, opts.Debug)
+	if err := os.MkdirAll(filepath.Dir(opts.OutputPath), 0o755); err != nil {
+		return 0, fmt.Errorf("创建输出目录失败: %w", err)
+	}
+
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s", filepath.ToSlash(opts.OutputPath)))
+	if err != nil {
+		return 0, err
+	}
+
+	if _, err := db.Exec("PRAGMA journal_mode=OFF;"); err != nil {
+		_ = db.Close()
+		return 0, err
+	}
+	if _, err := db.Exec("PRAGMA synchronous=OFF;"); err != nil {
+		_ = db.Close()
+		return 0, err
+	}
+	if err := llmsamples.EnsureSchema(db); err != nil {
+		_ = db.Close()
+		return 0, err
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		_ = db.Close()
+		return 0, err
+	}
+
+	stmt, err := tx.Prepare(`
+INSERT OR REPLACE INTO llm_samples(
+  id, trade_date, rsi, volatility, change_5d, ma5_slope, momentum_score, future_1d, future_5d
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+	if err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+		return 0, err
+	}
+	defer stmt.Close()
+
+	maxDateStmt, err := tx.Prepare("SELECT MAX(trade_date) FROM llm_samples WHERE id LIKE ?")
+	if err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+		return 0, err
+	}
+	defer maxDateStmt.Close()
+
+	stocks, err := stockdata.GetStockList()
+	if err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+		return 0, err
+	}
+	sort.Slice(stocks, func(i, j int) bool { return stocks[i].Code < stocks[j].Code })
+	if opts.MaxStocks > 0 && opts.MaxStocks < len(stocks) {
+		stocks = stocks[:opts.MaxStocks]
+	}
+
+	firstIndexAfter := func(data []stockdata.KlineData, d string) int {
+		if strings.TrimSpace(d) == "" {
+			return 0
+		}
+		for i := 0; i < len(data); i++ {
+			if data[i].Date > d {
+				return i
+			}
+		}
+		return len(data)
+	}
+
+	written := 0
+	stocksWritten := 0
+	stocksSkipped := 0
+	startAt := time.Now()
+	for idx, s := range stocks {
+		kline, err := stockdata.GetKline(s.Code, "daily")
+		if err != nil || kline == nil || len(kline.Data) < opts.MinHistoryLen+6 {
+			stocksSkipped++
+			samplegenDebugf(opts.Debug, "skip stock=%s reason=insufficient_kline", s.Code)
+			continue
+		}
+
+		var lastDate sql.NullString
+		if err := maxDateStmt.QueryRow(s.Code + "_%").Scan(&lastDate); err != nil {
+			_ = tx.Rollback()
+			_ = db.Close()
+			return 0, err
+		}
+
+		end := len(kline.Data) - 5
+		start := opts.MinHistoryLen
+		if opts.DaysPerStock > 0 {
+			cand := end - opts.DaysPerStock + 1
+			if cand > start {
+				start = cand
+			}
+		}
+		startDate := ""
+		lastDateStr := ""
+		if lastDate.Valid {
+			lastDateStr = lastDate.String
+		}
+		if start >= 0 && start < len(kline.Data) {
+			startDate = kline.Data[start].Date
+		}
+		if lastDate.Valid {
+			cand := firstIndexAfter(kline.Data, lastDate.String)
+			if cand > start {
+				start = cand
+			}
+		}
+		if start < opts.MinHistoryLen {
+			start = opts.MinHistoryLen
+		}
+		if start > end {
+			stocksSkipped++
+			samplegenDebugf(opts.Debug, "skip stock=%s last_date=%s reason=no_new_trade_date", s.Code, lastDateStr)
+			continue
+		}
+		if start >= 0 && start < len(kline.Data) {
+			startDate = kline.Data[start].Date
+		}
+
+		stockStartWritten := written
+
+		for i := start; i <= end; i++ {
+			baseClose := kline.Data[i-1].Close
+			if baseClose <= 0 {
+				continue
+			}
+			ind, err := stockdata.CalculateIndicators(kline.Data[:i])
+			if err != nil || ind == nil {
+				continue
+			}
+
+			f1 := (kline.Data[i].Close - baseClose) / baseClose * 100
+			f5 := (kline.Data[i+4].Close - baseClose) / baseClose * 100
+
+			id := fmt.Sprintf("%s_%s", s.Code, kline.Data[i].Date)
+			if _, err := stmt.Exec(
+				id,
+				kline.Data[i].Date,
+				ind.RSI,
+				ind.Volatility,
+				ind.Change5D,
+				ind.MA5Slope,
+				ind.MomentumScore,
+				f1,
+				f5,
+			); err != nil {
+				_ = tx.Rollback()
+				_ = db.Close()
+				return 0, err
+			}
+			written++
+		}
+
+		stockWritten := written - stockStartWritten
+		if stockWritten > 0 {
+			stocksWritten++
+		}
+		samplegenDebugf(opts.Debug, "stock=%s last_date=%s start_date=%s wrote=%d", s.Code, lastDateStr, startDate, stockWritten)
+
+		if (idx+1)%50 == 0 {
+			elapsed := time.Since(startAt)
+			samplegenInfof("progress: %d/%d stocks, rows=%d, elapsed=%s", idx+1, len(stocks), written, elapsed.Truncate(time.Second))
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		_ = db.Close()
+		return 0, err
+	}
+	if err := db.Close(); err != nil {
+		return 0, err
+	}
+	samplegenInfof("done: mode=incremental, stocks=%d, stocks_written=%d, stocks_skipped=%d, rows=%d, elapsed=%s", len(stocks), stocksWritten, stocksSkipped, written, time.Since(startAt).Truncate(time.Second))
+	return written, nil
+}
+
+func samplegenInfof(format string, args ...any) {
+	log.Printf("[INFO][sample-gen] "+format, args...)
+}
+
+func samplegenErrorf(format string, args ...any) {
+	log.Printf("[ERROR][sample-gen] "+format, args...)
+}
+
+func samplegenDebugf(enabled bool, format string, args ...any) {
+	if !enabled {
+		return
+	}
+	log.Printf("[DEBUG][sample-gen] "+format, args...)
 }
 
 func parseHHMM(s string) (int, int, error) {

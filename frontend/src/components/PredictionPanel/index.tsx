@@ -233,7 +233,7 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
             <span className="value">{result.current_price.toFixed(2)}</span>
           </div>
           <div className="price-item">
-            <span className="label">目标价(5日)</span>
+            <span className="label">目标价(第5日收盘)</span>
             <span className={`value ${priceChange >= 0 ? "up" : "down"}`}>
               {result.target_prices.short.toFixed(2)}
               <small>
@@ -419,7 +419,36 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
 };
 
 const PredictionPanel: React.FC = () => {
-  const { predictions, loading } = useStockStore();
+  const {
+    predictions,
+    loading,
+    predictInProgress,
+    predictMeta,
+    predictProgress,
+    selectedStocks,
+  } = useStockStore();
+
+  const progressPercent =
+    predictInProgress && predictProgress && predictProgress.total > 0
+      ? Math.min(
+          100,
+          Math.max(0, (predictProgress.done / predictProgress.total) * 100)
+        )
+      : 0;
+
+  const progressText =
+    predictInProgress && predictMeta
+      ? `预测中：${predictProgress?.done ?? 0}/${predictProgress?.total ?? 0}` +
+        (predictProgress?.current_code
+          ? (() => {
+              const code = predictProgress.current_code;
+              const name = selectedStocks.find((s) => s.code === code)?.name;
+              return `，当前：${code}${name ? " " + name : ""}`;
+            })()
+          : "")
+      : "";
+
+  const showProgress = predictInProgress || loading;
 
   return (
     <div className="prediction-panel">
@@ -431,7 +460,16 @@ const PredictionPanel: React.FC = () => {
         {predictions.length === 0 ? (
           <Empty
             description={
-              loading ? "预测中..." : '选择股票后点击"开始预测"查看结果'
+              showProgress ? (
+                <div style={{ minWidth: 260 }}>
+                  <div style={{ marginBottom: 8 }}>
+                    {progressText || "预测中..."}
+                  </div>
+                  <Progress percent={Math.round(progressPercent)} />
+                </div>
+              ) : (
+                '选择股票后点击"开始预测"查看结果'
+              )
             }
           />
         ) : (

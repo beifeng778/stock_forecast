@@ -2,11 +2,16 @@ package langchain
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +28,8 @@ var (
 	llmSamplesPath  string
 	llmSamplesTopK  int
 	llmDebugSamples bool
+	llmTemperature  float64
+	llmTopP         float64
 )
 
 var llmConfigOnce sync.Once
@@ -51,6 +58,30 @@ func loadLLMConfig() {
 	if v := strings.TrimSpace(os.Getenv("LLM_SAMPLES_TOPK")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 20 {
 			llmSamplesTopK = n
+		}
+	}
+	llmTemperature = 0
+	if v := strings.TrimSpace(os.Getenv("LLM_TEMPERATURE")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			if f < 0 {
+				f = 0
+			}
+			if f > 2 {
+				f = 2
+			}
+			llmTemperature = f
+		}
+	}
+	llmTopP = 1
+	if v := strings.TrimSpace(os.Getenv("LLM_TOP_P")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			if f < 0 {
+				f = 0
+			}
+			if f > 1 {
+				f = 1
+			}
+			llmTopP = f
 		}
 	}
 }
@@ -82,8 +113,10 @@ func callChatCompletions(messages []Message, timeout time.Duration) (string, err
 	}
 
 	req := OpenAIChatCompletionRequest{
-		Model:    llmModel,
-		Messages: messages,
+		Model:       llmModel,
+		Messages:    messages,
+		Temperature: llmTemperature,
+		TopP:        llmTopP,
 	}
 	jsonData, err := json.Marshal(req)
 	if err != nil {
@@ -137,6 +170,67 @@ type ohlcvLLMResponse struct {
 	Reasons      []string          `json:"reasons"`
 }
 
+type OHLCVOptions struct {
+	AllowRetry   bool
+	Timeout      time.Duration
+	RetryTimeout time.Duration
+}
+
+type ohlcvCacheItem struct {
+	Value     ohlcvLLMResponse
+	ExpiresAt time.Time
+}
+
+type newsImpactCacheItem struct {
+	Value     NewsImpact
+	ExpiresAt time.Time
+}
+
+var (
+	ohlcvCacheMu      sync.Mutex
+	ohlcvCache        = map[string]ohlcvCacheItem{}
+	newsImpactCacheMu sync.Mutex
+	newsImpactCache   = map[string]newsImpactCacheItem{}
+)
+
+func ohlcvCacheKey(modelName string, prompt string) string {
+	sum := sha1.Sum([]byte(prompt))
+	return "llm:ohlcv:" + modelName + ":" + hex.EncodeToString(sum[:])
+}
+
+func ohlcvDayCacheKey(modelName, code, today string, hasTodayActual, needPredictToday bool) string {
+	return fmt.Sprintf("llm:ohlcv:day:%s:%s:%s:%t:%t", modelName, code, today, hasTodayActual, needPredictToday)
+}
+
+func newsImpactDayCacheKey(modelName, code, today, newsKey string) string {
+	return fmt.Sprintf("llm:news_impact:day:%s:%s:%s:%s", modelName, code, today, newsKey)
+}
+
+func newsImpactKey(news []NewsItem) string {
+	if len(news) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, n := range news {
+		sb.WriteString(n.Time)
+		sb.WriteString("|")
+		sb.WriteString(n.Title)
+		sb.WriteString("\n")
+	}
+	sum := sha1.Sum([]byte(sb.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+func ohlcvCacheTTLNow() time.Duration {
+	now := time.Now()
+	loc := now.Location()
+	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
+	if tomorrow.After(now) {
+		return time.Until(tomorrow)
+	}
+	return 12 * time.Hour
+}
+
 type llmSample struct {
 	ID       string `json:"id"`
 	Features struct {
@@ -153,16 +247,54 @@ type llmSample struct {
 }
 
 func loadTopLLMSamples(path string, ind model.TechnicalIndicators, topK int) []llmSample {
+	if topK <= 0 {
+		return nil
+	}
+
+	candidateMul := 8
+	if v := strings.TrimSpace(os.Getenv("LLM_SAMPLES_CANDIDATE_MULTIPLIER")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n < 1 {
+				n = 1
+			}
+			if n > 50 {
+				n = 50
+			}
+			candidateMul = n
+		}
+	}
+	candidateK := topK * candidateMul
+	if candidateK < topK {
+		candidateK = topK
+	}
+	if candidateK > 200 {
+		candidateK = 200
+	}
+
+	dedupStock := getEnvBool("LLM_SAMPLES_DEDUP_STOCK", true)
+	maxPerStock := 1
+	if v := strings.TrimSpace(os.Getenv("LLM_SAMPLES_MAX_PER_STOCK")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n < 1 {
+				n = 1
+			}
+			if n > 20 {
+				n = 20
+			}
+			maxPerStock = n
+		}
+	}
+
 	loaded, err := llmsamples.QueryTopK(path, llmsamples.Indicators{
 		RSI:           ind.RSI,
 		Volatility:    ind.Volatility,
 		Change5D:      ind.Change5D,
 		MA5Slope:      ind.MA5Slope,
 		MomentumScore: ind.MomentumScore,
-	}, topK)
+	}, candidateK)
 	if err != nil {
 		if llmDebugSamples {
-			fmt.Printf("[LLM][samples] QueryTopK failed: db=%s err=%v\n", path, err)
+			log.Printf("[DEBUG][LLM][samples] QueryTopK failed: db=%s err=%v", path, err)
 		}
 		return nil
 	}
@@ -170,8 +302,29 @@ func loadTopLLMSamples(path string, ind model.TechnicalIndicators, topK int) []l
 		return nil
 	}
 
-	out := make([]llmSample, 0, len(loaded))
-	for _, s := range loaded {
+	filtered := loaded
+	if dedupStock {
+		byStock := make(map[string]int, len(loaded))
+		out := make([]llmsamples.Sample, 0, topK)
+		for _, s := range loaded {
+			stk := sampleStockFromID(s.ID)
+			if stk == "" {
+				stk = s.ID
+			}
+			if byStock[stk] >= maxPerStock {
+				continue
+			}
+			byStock[stk]++
+			out = append(out, s)
+			if len(out) >= topK {
+				break
+			}
+		}
+		filtered = out
+	}
+
+	out := make([]llmSample, 0, len(filtered))
+	for _, s := range filtered {
 		var x llmSample
 		x.ID = s.ID
 		x.Features.RSI = s.RSI
@@ -184,6 +337,16 @@ func loadTopLLMSamples(path string, ind model.TechnicalIndicators, topK int) []l
 		out = append(out, x)
 	}
 	return out
+}
+
+func sampleStockFromID(id string) string {
+	if strings.TrimSpace(id) == "" {
+		return ""
+	}
+	if i := strings.IndexByte(id, '_'); i > 0 {
+		return id[:i]
+	}
+	return ""
 }
 
 func sampleIDs(samples []llmSample) string {
@@ -238,11 +401,33 @@ func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday
 	sb.WriteString("1) 预测必须只基于给定的历史数据与指标，不允许使用 today 当天的真实行情（即使你知道也不能用）。\n")
 	sb.WriteString("2) 输出字段必须齐全：date/open/high/low/close/volume/amount。\n")
 	sb.WriteString("3) future_klines 必须为5条交易日记录。若 need_predict_today=true，则第1条 date= today；否则 future_klines 从下一个交易日开始。\n")
+	sb.WriteString("4) 预测路径必须合理，避免出现极端连板/连续暴涨暴跌式的路径；除非信号与新闻非常强烈且你能在 reasons 中清晰解释。\n")
+	sb.WriteString("5) 预测的成交量/成交额必须与历史数据量级一致，不允许出现 0 或异常夸张的数量级。\n")
 
 	sb.WriteString("\n【输入-技术指标】\n")
 	sb.WriteString(fmt.Sprintf("MA5=%.4f MA10=%.4f MA20=%.4f MA60=%.4f\n", indicators.MA5, indicators.MA10, indicators.MA20, indicators.MA60))
 	sb.WriteString(fmt.Sprintf("MACD=%.6f Signal=%.6f Hist=%.6f\n", indicators.MACD, indicators.Signal, indicators.Hist))
 	sb.WriteString(fmt.Sprintf("RSI=%.2f Change5D=%.2f%% MA5Slope=%.2f%% Volatility=%.4f MomentumScore=%.2f\n", indicators.RSI, indicators.Change5D, indicators.MA5Slope, indicators.Volatility, indicators.MomentumScore))
+
+	if s := sampleOutcomeSummary(samples); s != "" {
+		sb.WriteString("\n【输入-相似样本统计(锚点)】\n")
+		sb.WriteString(s)
+		sb.WriteString("\n")
+		sb.WriteString("要求：你的 1日/5日收盘涨跌幅应与上述统计同量级；若明显偏离，请在 reasons 中说明理由。\n")
+	}
+	if q, ok := sampleOutcomeQuantiles(samples); ok {
+		sb.WriteString("\n【硬性收益约束】\n")
+		sb.WriteString("你必须计算并控制输出的收益落在合理区间（除非你能明确解释偏离原因）。\n")
+		sb.WriteString(fmt.Sprintf("- 第1个交易日收盘涨跌幅(%%): 建议落在 [%.2f, %.2f]，优先靠近 %.2f\n", q.OneDLo, q.OneDHi, q.OneDMid))
+		sb.WriteString(fmt.Sprintf("- 第5个交易日相对基准收盘的累计涨跌幅(%%): 建议落在 [%.2f, %.2f]，优先靠近 %.2f\n", q.FiveDLo, q.FiveDHi, q.FiveDMid))
+		sb.WriteString("说明：若你选择超出区间，必须在 reasons 给出“信号/新闻/趋势结构”的量化理由。\n")
+	}
+	if vs := historyVolAmtSummary(history, 20); vs != "" {
+		sb.WriteString("\n【输入-历史量能统计(锚点)】\n")
+		sb.WriteString(vs)
+		sb.WriteString("\n")
+		sb.WriteString("要求：预测的 volume/amount 必须与上述历史量能同量级，优先落在 P25-P75 附近；偏离需在 reasons 中说明。\n")
+	}
 
 	if len(signals) > 0 {
 		sb.WriteString("\n【输入-信号】\n")
@@ -289,14 +474,364 @@ func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday
 	return sb.String()
 }
 
+func sampleOutcomeSummary(samples []llmSample) string {
+	if len(samples) == 0 {
+		return ""
+	}
+	one := make([]float64, 0, len(samples))
+	five := make([]float64, 0, len(samples))
+	for _, s := range samples {
+		one = append(one, s.Outcome.Future1D)
+		five = append(five, s.Outcome.Future5D)
+	}
+	sort.Float64s(one)
+	sort.Float64s(five)
+	q := func(vals []float64, p float64) float64 {
+		n := len(vals)
+		if n == 0 {
+			return 0
+		}
+		if n == 1 {
+			return vals[0]
+		}
+		pos := p * float64(n-1)
+		lo := int(math.Floor(pos))
+		hi := int(math.Ceil(pos))
+		if lo < 0 {
+			lo = 0
+		}
+		if hi >= n {
+			hi = n - 1
+		}
+		if lo == hi {
+			return vals[lo]
+		}
+		w := pos - float64(lo)
+		return vals[lo]*(1-w) + vals[hi]*w
+	}
+	return fmt.Sprintf("future1d: P25=%.2f%% P50=%.2f%% P75=%.2f%%; future5d: P25=%.2f%% P50=%.2f%% P75=%.2f%%", q(one, 0.25), q(one, 0.5), q(one, 0.75), q(five, 0.25), q(five, 0.5), q(five, 0.75))
+}
+
+type outcomeQuantiles struct {
+	OneDLo   float64
+	OneDMid  float64
+	OneDHi   float64
+	FiveDLo  float64
+	FiveDMid float64
+	FiveDHi  float64
+}
+
+func sampleOutcomeQuantiles(samples []llmSample) (outcomeQuantiles, bool) {
+	if len(samples) == 0 {
+		return outcomeQuantiles{}, false
+	}
+	one := make([]float64, 0, len(samples))
+	five := make([]float64, 0, len(samples))
+	for _, s := range samples {
+		one = append(one, s.Outcome.Future1D)
+		five = append(five, s.Outcome.Future5D)
+	}
+	if len(one) == 0 || len(five) == 0 {
+		return outcomeQuantiles{}, false
+	}
+	sort.Float64s(one)
+	sort.Float64s(five)
+	q := func(vals []float64, p float64) float64 {
+		n := len(vals)
+		if n == 0 {
+			return 0
+		}
+		if n == 1 {
+			return vals[0]
+		}
+		pos := p * float64(n-1)
+		lo := int(math.Floor(pos))
+		hi := int(math.Ceil(pos))
+		if lo < 0 {
+			lo = 0
+		}
+		if hi >= n {
+			hi = n - 1
+		}
+		if lo == hi {
+			return vals[lo]
+		}
+		w := pos - float64(lo)
+		return vals[lo]*(1-w) + vals[hi]*w
+	}
+	return outcomeQuantiles{
+		OneDLo:   q(one, 0.25),
+		OneDMid:  q(one, 0.5),
+		OneDHi:   q(one, 0.75),
+		FiveDLo:  q(five, 0.25),
+		FiveDMid: q(five, 0.5),
+		FiveDHi:  q(five, 0.75),
+	}, true
+}
+
+func historyVolAmtSummary(history []model.KlineData, lastN int) string {
+	if len(history) == 0 {
+		return ""
+	}
+	if lastN <= 0 {
+		lastN = 20
+	}
+	start := len(history) - lastN
+	if start < 0 {
+		start = 0
+	}
+	vols := make([]float64, 0, lastN)
+	amts := make([]float64, 0, lastN)
+	for i := start; i < len(history); i++ {
+		v := history[i].Volume
+		a := history[i].Amount
+		if v > 0 {
+			vols = append(vols, v)
+		}
+		if a > 0 {
+			amts = append(amts, a)
+		}
+	}
+	if len(vols) == 0 && len(amts) == 0 {
+		return ""
+	}
+	sort.Float64s(vols)
+	sort.Float64s(amts)
+	q := func(vals []float64, p float64) float64 {
+		n := len(vals)
+		if n == 0 {
+			return 0
+		}
+		if n == 1 {
+			return vals[0]
+		}
+		pos := p * float64(n-1)
+		lo := int(math.Floor(pos))
+		hi := int(math.Ceil(pos))
+		if lo < 0 {
+			lo = 0
+		}
+		if hi >= n {
+			hi = n - 1
+		}
+		if lo == hi {
+			return vals[lo]
+		}
+		w := pos - float64(lo)
+		return vals[lo]*(1-w) + vals[hi]*w
+	}
+	volText := ""
+	amtText := ""
+	if len(vols) > 0 {
+		volText = fmt.Sprintf("volume: P25=%.0f P50=%.0f P75=%.0f", q(vols, 0.25), q(vols, 0.5), q(vols, 0.75))
+	}
+	if len(amts) > 0 {
+		amtText = fmt.Sprintf("amount: P25=%.0f P50=%.0f P75=%.0f", q(amts, 0.25), q(amts, 0.5), q(amts, 0.75))
+	}
+	if volText != "" && amtText != "" {
+		return volText + "; " + amtText
+	}
+	if volText != "" {
+		return volText
+	}
+	return amtText
+}
+
 func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData) (*model.KlineData, []model.KlineData, error) {
+	return PredictOHLCVWithOptions(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, OHLCVOptions{AllowRetry: true, Timeout: 35 * time.Second, RetryTimeout: 20 * time.Second})
+}
+
+func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData, opts OHLCVOptions) (*model.KlineData, []model.KlineData, error) {
 	ensureLLMConfig()
+	if opts.Timeout <= 0 {
+		opts.Timeout = 35 * time.Second
+	}
+	if opts.RetryTimeout <= 0 {
+		opts.RetryTimeout = 20 * time.Second
+	}
+	dayKey := ohlcvDayCacheKey(llmModel, code, today, hasTodayActual, needPredictToday)
 	topSamples := loadTopLLMSamples(llmSamplesPath, indicators, llmSamplesTopK)
 	if llmDebugSamples {
-		fmt.Printf("[LLM][samples] code=%s db=%s topk=%d hit=%d ids=%s\n", code, llmSamplesPath, llmSamplesTopK, len(topSamples), sampleIDs(topSamples))
+		log.Printf("[DEBUG][LLM][samples] code=%s db=%s topk=%d hit=%d ids=%s", code, llmSamplesPath, llmSamplesTopK, len(topSamples), sampleIDs(topSamples))
+		if s := sampleOutcomeSummary(topSamples); s != "" {
+			log.Printf("[DEBUG][LLM][samples] code=%s outcome_summary=%s", code, s)
+		}
+		if q, ok := sampleOutcomeQuantiles(topSamples); ok {
+			log.Printf("[DEBUG][LLM][samples] code=%s outcome_q one=[%.2f,%.2f,%.2f] five=[%.2f,%.2f,%.2f]", code, q.OneDLo, q.OneDMid, q.OneDHi, q.FiveDLo, q.FiveDMid, q.FiveDHi)
+		}
+		if vs := historyVolAmtSummary(history, 20); vs != "" {
+			log.Printf("[DEBUG][LLM][history] code=%s vol_amt_summary=%s", code, vs)
+		}
+	}
+
+	// 校验：收益分位(来自样本) + 量能量级(来自历史)
+	validate := func(o ohlcvLLMResponse) (string, bool) {
+		baseClose := 0.0
+		if len(history) > 0 {
+			baseClose = history[len(history)-1].Close
+		}
+		if baseClose <= 0 || len(o.FutureKlines) == 0 {
+			return "", true
+		}
+		day1 := (o.FutureKlines[0].Close - baseClose) / baseClose * 100
+		idx5 := 4
+		if len(o.FutureKlines) < 5 {
+			idx5 = len(o.FutureKlines) - 1
+		}
+		day5 := (o.FutureKlines[idx5].Close - baseClose) / baseClose * 100
+
+		var issues []string
+		if q, ok := sampleOutcomeQuantiles(topSamples); ok {
+			if !inRangeWithTol(day1, q.OneDLo, q.OneDHi) {
+				issues = append(issues, fmt.Sprintf("第1日收益=%.2f%% 不在样本分位区间[%.2f%%, %.2f%%]附近", day1, q.OneDLo, q.OneDHi))
+			}
+			if !inRangeWithTol(day5, q.FiveDLo, q.FiveDHi) {
+				issues = append(issues, fmt.Sprintf("第5日累计收益=%.2f%% 不在样本分位区间[%.2f%%, %.2f%%]附近", day5, q.FiveDLo, q.FiveDHi))
+			}
+		}
+		if va, ok := historyVolAmtQuantiles(history, 20); ok {
+			for i, k := range o.FutureKlines {
+				if va.VolLo > 0 || va.VolHi > 0 {
+					if !inRangeWithRatio(k.Volume, va.VolLo, va.VolHi, 0.3, 3.0) {
+						issues = append(issues, fmt.Sprintf("future_klines[%d].volume=%.0f 与历史量级不一致", i, k.Volume))
+						break
+					}
+				}
+				if va.AmtLo > 0 || va.AmtHi > 0 {
+					if !inRangeWithRatio(k.Amount, va.AmtLo, va.AmtHi, 0.3, 3.0) {
+						issues = append(issues, fmt.Sprintf("future_klines[%d].amount=%.0f 与历史量级不一致", i, k.Amount))
+						break
+					}
+				}
+			}
+		}
+
+		if len(issues) == 0 {
+			return "", true
+		}
+		return strings.Join(issues, "；"), false
+	}
+
+	parseOut := func(raw string) (ohlcvLLMResponse, error) {
+		jsonText := extractJSONObject(raw)
+		if jsonText == "" {
+			return ohlcvLLMResponse{}, fmt.Errorf("LLM未返回可解析JSON")
+		}
+		var out ohlcvLLMResponse
+		if err := json.Unmarshal([]byte(jsonText), &out); err != nil {
+			return ohlcvLLMResponse{}, fmt.Errorf("解析LLM JSON失败: %v", err)
+		}
+		if len(out.FutureKlines) == 0 {
+			return out, fmt.Errorf("LLM返回future_klines为空")
+		}
+		return out, nil
+	}
+
+	selfCorrectOnce := func(prompt, issues string) (ohlcvLLMResponse, bool) {
+		if strings.TrimSpace(issues) == "" {
+			return ohlcvLLMResponse{}, false
+		}
+		if !opts.AllowRetry {
+			if llmDebugSamples {
+				log.Printf("[INFO][LLM][validate] code=%s retry_disabled=1", code)
+			}
+			return ohlcvLLMResponse{}, false
+		}
+		feedback := "\n\n【校验反馈(必须修正)】\n" +
+			"你刚才输出存在不合理之处：" + issues + "。\n" +
+			"请你在不改变输出JSON结构的前提下，重新生成一份更符合样本分位与量能量级的预测。\n" +
+			"注意：仍然只能输出严格JSON，不要输出任何解释。\n"
+		retryResult, rErr := callChatCompletions([]Message{
+			{
+				Role:    "system",
+				Content: "你是一个只输出严格JSON的预测服务。输出必须是可被json解析的对象，禁止输出markdown/解释/额外文本。",
+			},
+			{
+				Role:    "user",
+				Content: prompt + feedback,
+			},
+		}, opts.RetryTimeout)
+		if rErr != nil {
+			return ohlcvLLMResponse{}, false
+		}
+		o2, e2 := parseOut(retryResult)
+		if e2 != nil {
+			return ohlcvLLMResponse{}, false
+		}
+		if msg2, ok2 := validate(o2); !ok2 {
+			if llmDebugSamples {
+				log.Printf("[WARN][LLM][validate] code=%s retry_done=1 still_issues=%s", code, msg2)
+			}
+			return ohlcvLLMResponse{}, false
+		}
+		if llmDebugSamples {
+			log.Printf("[INFO][LLM][validate] code=%s retry_done=1 ok=1", code)
+		}
+		return o2, true
+	}
+
+	if ttl := ohlcvCacheTTLNow(); ttl > 0 {
+		now := time.Now()
+		ohlcvCacheMu.Lock()
+		item, ok := ohlcvCache[dayKey]
+		if ok && !item.ExpiresAt.IsZero() && now.Before(item.ExpiresAt) {
+			out := item.Value
+			ohlcvCacheMu.Unlock()
+			if llmDebugSamples {
+				log.Printf("[DEBUG][LLM][ohlcv_cache] hit=day code=%s today=%s", code, today)
+			}
+			if len(out.FutureKlines) == 0 {
+				return out.AIToday, nil, fmt.Errorf("LLM返回future_klines为空")
+			}
+			if msg, ok := validate(out); !ok {
+				if llmDebugSamples {
+					log.Printf("[WARN][LLM][validate] code=%s cache=day bypass=1 issues=%s", code, msg)
+				}
+				ohlcvCacheMu.Lock()
+				delete(ohlcvCache, dayKey)
+				ohlcvCacheMu.Unlock()
+				// 继续往下走，重新请求 LLM 并覆盖缓存
+			} else {
+				return out.AIToday, out.FutureKlines, nil
+			}
+		} else {
+			ohlcvCacheMu.Unlock()
+		}
 	}
 
 	prompt := buildOHLCVPrompt(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, topSamples)
+	cacheKey := ohlcvCacheKey(llmModel, prompt)
+	if ttl := ohlcvCacheTTLNow(); ttl > 0 {
+		now := time.Now()
+		ohlcvCacheMu.Lock()
+		item, ok := ohlcvCache[cacheKey]
+		if ok && !item.ExpiresAt.IsZero() && now.Before(item.ExpiresAt) {
+			out := item.Value
+			ohlcvCacheMu.Unlock()
+			if llmDebugSamples {
+				log.Printf("[DEBUG][LLM][ohlcv_cache] hit=prompt code=%s today=%s", code, today)
+			}
+			if len(out.FutureKlines) == 0 {
+				return out.AIToday, nil, fmt.Errorf("LLM返回future_klines为空")
+			}
+			if msg, ok := validate(out); !ok {
+				if llmDebugSamples {
+					log.Printf("[WARN][LLM][validate] code=%s cache=prompt bypass=1 issues=%s", code, msg)
+				}
+				ohlcvCacheMu.Lock()
+				delete(ohlcvCache, cacheKey)
+				ohlcvCacheMu.Unlock()
+				// 继续往下走，重新请求 LLM 并覆盖缓存
+			} else {
+				return out.AIToday, out.FutureKlines, nil
+			}
+		} else {
+			ohlcvCacheMu.Unlock()
+		}
+	}
+	if llmDebugSamples {
+		log.Printf("[DEBUG][LLM][ohlcv_cache] hit=miss code=%s today=%s", code, today)
+	}
 
 	result, err := callChatCompletions([]Message{
 		{
@@ -307,21 +842,34 @@ func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday boo
 			Role:    "user",
 			Content: prompt,
 		},
-	}, 60*time.Second)
+	}, opts.Timeout)
 	if err != nil {
 		return nil, nil, err
 	}
-	jsonText := extractJSONObject(result)
-	if jsonText == "" {
-		return nil, nil, fmt.Errorf("LLM未返回可解析JSON")
+
+	out, err := parseOut(result)
+	if err != nil {
+		return nil, nil, err
+	}
+	cacheable := true
+	if msg, ok := validate(out); !ok {
+		if llmDebugSamples {
+			log.Printf("[WARN][LLM][validate] code=%s retry=1 issues=%s", code, msg)
+		}
+		if o2, ok2 := selfCorrectOnce(prompt, msg); ok2 {
+			out = o2
+		} else if !opts.AllowRetry {
+			cacheable = false
+		}
 	}
 
-	var out ohlcvLLMResponse
-	if err := json.Unmarshal([]byte(jsonText), &out); err != nil {
-		return nil, nil, fmt.Errorf("解析LLM JSON失败: %v", err)
-	}
-	if len(out.FutureKlines) == 0 {
-		return out.AIToday, nil, fmt.Errorf("LLM返回future_klines为空")
+	if cacheable {
+		if ttl := ohlcvCacheTTLNow(); ttl > 0 {
+			ohlcvCacheMu.Lock()
+			ohlcvCache[cacheKey] = ohlcvCacheItem{Value: out, ExpiresAt: time.Now().Add(ttl)}
+			ohlcvCache[dayKey] = ohlcvCacheItem{Value: out, ExpiresAt: time.Now().Add(ttl)}
+			ohlcvCacheMu.Unlock()
+		}
 	}
 	return out.AIToday, out.FutureKlines, nil
 }
@@ -333,8 +881,118 @@ type Message struct {
 }
 
 type OpenAIChatCompletionRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	Temperature float64   `json:"temperature,omitempty"`
+	TopP        float64   `json:"top_p,omitempty"`
+}
+
+type volAmtQuantiles struct {
+	VolLo  float64
+	VolMid float64
+	VolHi  float64
+	AmtLo  float64
+	AmtMid float64
+	AmtHi  float64
+}
+
+func historyVolAmtQuantiles(history []model.KlineData, lastN int) (volAmtQuantiles, bool) {
+	if len(history) == 0 {
+		return volAmtQuantiles{}, false
+	}
+	if lastN <= 0 {
+		lastN = 20
+	}
+	start := len(history) - lastN
+	if start < 0 {
+		start = 0
+	}
+	vols := make([]float64, 0, lastN)
+	amts := make([]float64, 0, lastN)
+	for i := start; i < len(history); i++ {
+		v := history[i].Volume
+		a := history[i].Amount
+		if v > 0 {
+			vols = append(vols, v)
+		}
+		if a > 0 {
+			amts = append(amts, a)
+		}
+	}
+	if len(vols) == 0 && len(amts) == 0 {
+		return volAmtQuantiles{}, false
+	}
+	sort.Float64s(vols)
+	sort.Float64s(amts)
+	q := func(vals []float64, p float64) float64 {
+		n := len(vals)
+		if n == 0 {
+			return 0
+		}
+		if n == 1 {
+			return vals[0]
+		}
+		pos := p * float64(n-1)
+		lo := int(math.Floor(pos))
+		hi := int(math.Ceil(pos))
+		if lo < 0 {
+			lo = 0
+		}
+		if hi >= n {
+			hi = n - 1
+		}
+		if lo == hi {
+			return vals[lo]
+		}
+		w := pos - float64(lo)
+		return vals[lo]*(1-w) + vals[hi]*w
+	}
+	out := volAmtQuantiles{}
+	if len(vols) > 0 {
+		out.VolLo = q(vols, 0.25)
+		out.VolMid = q(vols, 0.5)
+		out.VolHi = q(vols, 0.75)
+	}
+	if len(amts) > 0 {
+		out.AmtLo = q(amts, 0.25)
+		out.AmtMid = q(amts, 0.5)
+		out.AmtHi = q(amts, 0.75)
+	}
+	return out, true
+}
+
+func inRangeWithTol(v, lo, hi float64) bool {
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	tol := math.Max(0.50, (hi-lo)*0.50)
+	return v >= lo-tol && v <= hi+tol
+}
+
+func inRangeWithRatio(v, lo, hi, minRatio, maxRatio float64) bool {
+	if v <= 0 {
+		return false
+	}
+	baseLo := lo
+	baseHi := hi
+	if baseLo <= 0 && baseHi <= 0 {
+		return true
+	}
+	if baseLo <= 0 {
+		baseLo = baseHi
+	}
+	if baseHi <= 0 {
+		baseHi = baseLo
+	}
+	minV := math.Min(baseLo, baseHi) * minRatio
+	maxV := math.Max(baseLo, baseHi) * maxRatio
+	if minV <= 0 {
+		minV = 1
+	}
+	if maxV <= 0 {
+		maxV = minV
+	}
+	return v >= minV && v <= maxV
 }
 
 type OpenAIChatCompletionResponse struct {
@@ -367,10 +1025,10 @@ type NewsImpact struct {
 func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml model.MLPredictions, signals []model.Signal, news []NewsItem) (string, error) {
 	ensureLLMConfig()
 	if strings.TrimSpace(llmAuthToken) == "" {
-		fmt.Println("[LLM] LLM_AUTH_TOKEN 未配置，使用备用分析")
+		log.Printf("[WARN][LLM] LLM_AUTH_TOKEN 未配置，使用备用分析")
 		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
 	}
-	fmt.Printf("[LLM] 使用模型: %s, base_url=%s, 新闻数量: %d\n", llmModel, llmBaseURL, len(news))
+	log.Printf("[INFO][LLM] 使用模型: %s, base_url=%s, 新闻数量: %d", llmModel, llmBaseURL, len(news))
 
 	prompt := buildAnalysisPrompt(code, name, indicators, ml, signals, news)
 
@@ -385,7 +1043,7 @@ func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml mo
 		},
 	}, 30*time.Second)
 	if err != nil {
-		fmt.Printf("[LLM] 请求失败: %v\n", err)
+		log.Printf("[ERROR][LLM] 请求失败: %v", err)
 		return generateFallbackAnalysis(code, name, indicators, ml, signals), nil
 	}
 
@@ -671,10 +1329,49 @@ func AnalyzeNewsImpact(code, name string, news []NewsItem) NewsImpact {
 		return NewsImpact{SentimentScore: 0, ImportanceLevel: 1, PriceImpact: 0}
 	}
 
+	today := time.Now().Format("2006-01-02")
+	newsKey := newsImpactKey(news)
+	dayKey := newsImpactDayCacheKey(llmModel, code, today, newsKey)
+	if ttl := ohlcvCacheTTLNow(); ttl > 0 {
+		now := time.Now()
+		newsImpactCacheMu.Lock()
+		item, ok := newsImpactCache[dayKey]
+		if ok && !item.ExpiresAt.IsZero() && now.Before(item.ExpiresAt) {
+			out := item.Value
+			newsImpactCacheMu.Unlock()
+			if llmDebugSamples {
+				log.Printf("[DEBUG][LLM][news_impact_cache] hit=day code=%s today=%s", code, today)
+			}
+			return out
+		}
+		newsImpactCacheMu.Unlock()
+	}
+	if llmDebugSamples {
+		log.Printf("[DEBUG][LLM][news_impact_cache] hit=miss code=%s today=%s", code, today)
+	}
+
 	// 构建新闻分析提示词
+	annStr := ""
+	mediaStr := ""
+	idx := 1
+	for _, n := range news {
+		line := fmt.Sprintf("%d. [%s] %s\n", idx, n.Time, n.Title)
+		if strings.Contains(n.Source, "公告") {
+			annStr += line
+		} else if strings.Contains(n.Source, "新闻") {
+			mediaStr += line
+		} else {
+			mediaStr += line
+		}
+		idx++
+	}
+
 	newsStr := ""
-	for i, n := range news {
-		newsStr += fmt.Sprintf("%d. [%s] %s\n", i+1, n.Time, n.Title)
+	if strings.TrimSpace(annStr) != "" {
+		newsStr += "最新公告：\n" + annStr + "\n"
+	}
+	if strings.TrimSpace(mediaStr) != "" {
+		newsStr += "最新新闻：\n" + mediaStr
 	}
 
 	prompt := fmt.Sprintf(`请分析以下新闻对股票 %s（%s）的影响：
@@ -744,6 +1441,12 @@ func AnalyzeNewsImpact(code, name string, news []NewsItem) NewsImpact {
 		impact.PriceImpact = 0.2
 	} else if impact.PriceImpact < -0.2 {
 		impact.PriceImpact = -0.2
+	}
+
+	if ttl := ohlcvCacheTTLNow(); ttl > 0 {
+		newsImpactCacheMu.Lock()
+		newsImpactCache[dayKey] = newsImpactCacheItem{Value: impact, ExpiresAt: time.Now().Add(ttl)}
+		newsImpactCacheMu.Unlock()
 	}
 
 	return impact

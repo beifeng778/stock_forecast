@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,6 +79,7 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 		// 2) Redis缓存（可用则读取）
 		var cached KlineResponse
 		if err := getCacheProvider().Get(key, &cached); err == nil && len(cached.Data) > 0 {
+			cached.Data = normalizeKlineData(cached.Data)
 			resp := &cached
 			klineCacheMu.Lock()
 			klineCache[key] = klineCacheItem{Value: resp, ExpiresAt: time.Now().Add(getKlineCacheTTL(period))}
@@ -89,6 +91,7 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 	// 先尝试新浪接口
 	data, err := getKlineFromSina(code, period)
 	if err == nil && len(data) > 0 {
+		data = normalizeKlineData(data)
 		name, _ := GetStockName(code)
 		resp := &KlineResponse{
 			Code:   code,
@@ -109,6 +112,7 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 	// 新浪失败，尝试东方财富
 	data, err = getKlineFromEM(code, period)
 	if err == nil && len(data) > 0 {
+		data = normalizeKlineData(data)
 		name, _ := GetStockName(code)
 		resp := &KlineResponse{
 			Code:   code,
@@ -127,6 +131,72 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 	}
 
 	return nil, fmt.Errorf("获取K线数据失败")
+}
+
+func normalizeKlineData(in []KlineData) []KlineData {
+	if len(in) == 0 {
+		return in
+	}
+
+	data := make([]KlineData, 0, len(in))
+	for _, d := range in {
+		d.Date = normalizeKlineDate(d.Date)
+		if strings.TrimSpace(d.Date) == "" {
+			continue
+		}
+		data = append(data, d)
+	}
+	if len(data) == 0 {
+		return data
+	}
+
+	sort.Slice(data, func(i, j int) bool { return data[i].Date < data[j].Date })
+
+	out := make([]KlineData, 0, len(data))
+	for _, d := range data {
+		if len(out) == 0 {
+			out = append(out, d)
+			continue
+		}
+		if out[len(out)-1].Date == d.Date {
+			out[len(out)-1] = d
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+func normalizeKlineDate(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	// 常见带时间格式："YYYY-MM-DD HH:MM:SS" / "YYYY/MM/DD HH:MM:SS"
+	if len(s) >= 10 {
+		prefix := s[:10]
+		if t, err := time.Parse("2006-01-02", prefix); err == nil {
+			return t.Format("2006-01-02")
+		}
+		if t, err := time.Parse("2006/01/02", prefix); err == nil {
+			return t.Format("2006-01-02")
+		}
+	}
+
+	// 纯数字格式："YYYYMMDD"
+	if len(s) == 8 {
+		if t, err := time.Parse("20060102", s); err == nil {
+			return t.Format("2006-01-02")
+		}
+	}
+
+	// 兜底：尽量把分隔符统一
+	s = strings.ReplaceAll(s, "/", "-")
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return s
 }
 
 // getKlineFromSina 从新浪获取K线

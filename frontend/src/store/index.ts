@@ -50,6 +50,38 @@ interface StockStore {
   loading: boolean;
   setLoading: (loading: boolean) => void;
 
+  // 预测任务状态（用于刷新后恢复轮询）
+  predictInProgress: boolean;
+  setPredictInProgress: (value: boolean) => void;
+  predictMeta: {
+    request_id: string;
+    stock_codes: string[];
+    period: PeriodType;
+  } | null;
+  setPredictMeta: (
+    meta: {
+      request_id: string;
+      stock_codes: string[];
+      period: PeriodType;
+    } | null
+  ) => void;
+
+  // 预测进度（与 request_id 绑定）
+  predictProgress: {
+    request_id: string;
+    done: number;
+    total: number;
+    current_code?: string;
+  } | null;
+  setPredictProgress: (
+    progress: {
+      request_id: string;
+      done: number;
+      total: number;
+      current_code?: string;
+    } | null
+  ) => void;
+
   // 已预测的股票代码（用于委托模拟筛选）
   predictedCodes: string[];
 
@@ -92,14 +124,19 @@ export const useStockStore = create<StockStore>()(
         set({ selectedStocks: selectedStocks.filter((s) => s.code !== code) });
       },
       removeStockWithData: (code) => {
-        const { selectedStocks, predictions, predictionKlines, tradeFormData } = get();
+        const { selectedStocks, predictions, predictionKlines, tradeFormData } =
+          get();
 
         // 移除股票
         const updatedStocks = selectedStocks.filter((s) => s.code !== code);
 
         // 移除对应的预测结果
-        const updatedPredictions = predictions.filter((p) => p.stock_code !== code);
-        const updatedPredictedCodes = updatedPredictions.map((p) => p.stock_code);
+        const updatedPredictions = predictions.filter(
+          (p) => p.stock_code !== code
+        );
+        const updatedPredictedCodes = updatedPredictions.map(
+          (p) => p.stock_code
+        );
 
         // 移除对应的预测K线数据
         const updatedPredictionKlines = { ...predictionKlines };
@@ -142,12 +179,26 @@ export const useStockStore = create<StockStore>()(
       predictions: [],
       setPredictions: (predictions) => {
         const codes = predictions.map((p) => p.stock_code);
-        set({ predictions, predictedCodes: codes });
+        set({
+          predictions,
+          predictedCodes: codes,
+          predictInProgress: false,
+          predictMeta: null,
+          predictProgress: null,
+        });
       },
       clearPredictions: () => set({ predictions: [], predictedCodes: [] }),
 
       loading: false,
       setLoading: (loading) => set({ loading }),
+
+      predictInProgress: false,
+      setPredictInProgress: (value) => set({ predictInProgress: value }),
+      predictMeta: null,
+      setPredictMeta: (meta) => set({ predictMeta: meta }),
+
+      predictProgress: null,
+      setPredictProgress: (progress) => set({ predictProgress: progress }),
 
       predictedCodes: [],
 
@@ -182,6 +233,9 @@ export const useStockStore = create<StockStore>()(
           predictions: [],
           predictedCodes: [],
           predictionKlines: {},
+          predictInProgress: false,
+          predictMeta: null,
+          predictProgress: null,
           tradeFormData: { quantity: 100 },
           tradeResult: null,
           tradeHasFutureDate: false,
@@ -195,6 +249,9 @@ export const useStockStore = create<StockStore>()(
         predictedCodes: state.predictedCodes,
         predictionKlines: state.predictionKlines,
         period: state.period,
+        predictInProgress: state.predictInProgress,
+        predictMeta: state.predictMeta,
+        predictProgress: state.predictProgress,
         tradeFormData: state.tradeFormData,
         tradeResult: state.tradeResult,
         tradeHasFutureDate: state.tradeHasFutureDate,

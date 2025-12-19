@@ -416,6 +416,20 @@ const TrendChart: React.FC = () => {
 
             const pred = predictions.find((p) => p.stock_code === currentStock);
 
+            let targetPctText = "";
+            if (
+              pred &&
+              pred.current_price > 0 &&
+              pred.target_prices?.short > 0
+            ) {
+              const pct =
+                ((pred.target_prices.short - pred.current_price) /
+                  pred.current_price) *
+                100;
+              const sign = pct >= 0 ? "+" : "";
+              targetPctText = `${sign}${pct.toFixed(2)}%`;
+            }
+
             // 计算历史数据涨跌幅
             let histChangePercent = 0;
             if (idx > 0 && klineData[idx - 1]?.close > 0) {
@@ -503,9 +517,11 @@ const TrendChart: React.FC = () => {
                   <div style="color:${aiChangeColor};font-weight:bold;margin-top:4px">AI预测涨跌幅: ${aiChangeText}</div>
                   ${
                     pred
-                      ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(
+                      ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(第5日收盘): ${pred.target_prices.short.toFixed(
                           2
-                        )} | 支撑: ${pred.support_level.toFixed(
+                        )}${
+                          targetPctText ? `（累计涨幅: ${targetPctText}）` : ""
+                        } | 支撑: ${pred.support_level.toFixed(
                           2
                         )} | 压力: ${pred.resistance_level.toFixed(2)}</div>`
                       : ""
@@ -579,7 +595,7 @@ const TrendChart: React.FC = () => {
                   <div style="color:${aiChangeColor};font-weight:bold;margin-top:4px">AI预测涨跌幅: ${aiChangeText}</div>
                   ${
                     pred
-                      ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(
+                      ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(第5日收盘): ${pred.target_prices.short.toFixed(
                           2
                         )} | 支撑: ${pred.support_level.toFixed(
                           2
@@ -657,7 +673,7 @@ const TrendChart: React.FC = () => {
                 <div style="color:${changeColor};font-weight:bold">AI预测涨跌幅: ${changeText}</div>
                 ${
                   pred
-                    ? `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(5日): ${pred.target_prices.short.toFixed(
+                    ? `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.2);color:#94a3b8;font-size:11px">目标价(第5日收盘): ${pred.target_prices.short.toFixed(
                         2
                       )} | 支撑: ${pred.support_level.toFixed(
                         2

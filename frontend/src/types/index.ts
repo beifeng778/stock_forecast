@@ -114,6 +114,8 @@ export interface PredictResult {
 // 预测请求
 export interface PredictRequest {
   stock_codes: string[];
+  request_id?: string;
+  onProgress?: (status: any) => void;
   period: string;
 }
 

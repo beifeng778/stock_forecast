@@ -59,11 +59,74 @@ const StockSelector: React.FC = () => {
     setPredictions,
     setLoading,
     loading,
+    predictions,
+    predictInProgress,
+    setPredictInProgress,
+    predictMeta,
+    setPredictMeta,
+    setPredictProgress,
+    predictProgress,
     clearPredictions,
     clearTradeData,
     clearAllData,
     updateStockNames,
   } = useStockStore();
+
+  useEffect(() => {
+    if (!predictInProgress || !predictMeta) return;
+    if (predictions.length > 0) {
+      setPredictInProgress(false);
+      setPredictMeta(null);
+      return;
+    }
+
+    // 刷新恢复时，若尚无进度信息，先初始化一个
+    if (!predictProgress && predictMeta.request_id) {
+      setPredictProgress({
+        request_id: predictMeta.request_id,
+        done: 0,
+        total: predictMeta.stock_codes?.length || 0,
+      });
+    }
+
+    setLoading(true);
+    const requestId = predictMeta.request_id;
+    predict({
+      ...predictMeta,
+      onProgress: (status) => {
+        if (!requestId) return;
+        setPredictProgress({
+          request_id: requestId,
+          done: status?.done || 0,
+          total: status?.total || 0,
+          current_code: status?.current_code,
+        });
+      },
+    })
+      .then((result) => {
+        setPredictions(result.results);
+        message.success("预测完成");
+      })
+      .catch((error) => {
+        console.error("预测失败:", error);
+        message.error("预测失败，请稍后重试");
+      })
+      .finally(() => {
+        setLoading(false);
+        setPredictInProgress(false);
+        setPredictMeta(null);
+        setPredictProgress(null);
+      });
+  }, [
+    predictInProgress,
+    predictMeta,
+    predictions.length,
+    setLoading,
+    setPredictions,
+    setPredictInProgress,
+    setPredictMeta,
+    setPredictProgress,
+  ]);
 
   // 加载股票列表（始终从缓存获取）
   const loadStockList = useCallback(
@@ -162,20 +225,24 @@ const StockSelector: React.FC = () => {
     clearPredictions();
     clearTradeData();
 
+    const requestId =
+      (globalThis.crypto as any)?.randomUUID?.() ||
+      `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+    setPredictMeta({
+      request_id: requestId,
+      stock_codes: selectedStocks.map((s) => s.code),
+      period,
+    });
+    setPredictInProgress(true);
+
+    setPredictProgress({
+      request_id: requestId,
+      done: 0,
+      total: selectedStocks.length,
+    });
+
+    // 统一由上面的 useEffect 触发 predict + 轮询，避免重复启动造成请求风暴
     setLoading(true);
-    try {
-      const result = await predict({
-        stock_codes: selectedStocks.map((s) => s.code),
-        period,
-      });
-      setPredictions(result.results);
-      message.success("预测完成");
-    } catch (error) {
-      console.error("预测失败:", error);
-      message.error("预测失败，请稍后重试");
-    } finally {
-      setLoading(false);
-    }
   };
 
   // 移除股票（带二次确认）

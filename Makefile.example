@@ -10,7 +10,7 @@ REGISTRY ?= localhost:5000
 # 镜像配置
 VERSION ?= 1.0.0
 
-.PHONY: help build-frontend deploy-frontend build-images push-images deploy deploy-db start-remote
+.PHONY: help build-frontend deploy-frontend build-images push-images build-sample-gen push-sample-gen deploy deploy-db start-remote
 
 help:
 	@echo "使用方法:"
@@ -18,6 +18,8 @@ help:
 	@echo "  make deploy-frontend   - 部署前端到生产环境"
 	@echo "  make build-images      - 构建Docker镜像"
 	@echo "  make push-images       - 上传镜像到服务器并加载"
+	@echo "  make build-sample-gen  - 构建 sample-gen 镜像"
+	@echo "  make push-sample-gen   - 上传 sample-gen 镜像到服务器并加载"
 	@echo "  make deploy-db         - 部署数据库(Redis)"
 	@echo "  make start-remote      - 远程启动服务"
 	@echo "  make deploy            - 完整部署流程"
@@ -42,6 +44,10 @@ deploy-frontend: build-frontend
 build-images:
 	docker build -t $(REGISTRY)/stock-forecast-backend:$(VERSION) ./backend
 
+# 构建 sample-gen 镜像
+build-sample-gen:
+	docker build -t $(REGISTRY)/stock-forecast-sample-gen:$(VERSION) ./sample-gen
+
 # 推送镜像到服务器
 push-images:
 	@echo "导出镜像为tar包..."
@@ -52,6 +58,18 @@ push-images:
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker load -i backend.tar && rm -f backend.tar"
 	@echo "清理本地tar包..."
 	rm -f backend.tar
+	@echo "镜像上传完成"
+
+# 推送 sample-gen 镜像到服务器
+push-sample-gen:
+	@echo "导出镜像为tar包..."
+	docker save -o sample-gen.tar $(REGISTRY)/stock-forecast-sample-gen:$(VERSION)
+	@echo "上传镜像到服务器..."
+	scp sample-gen.tar $(PROD_HOST):$(REMOTE_DIR)/
+	@echo "在服务器加载镜像..."
+	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker load -i sample-gen.tar && rm -f sample-gen.tar"
+	@echo "清理本地tar包..."
+	rm -f sample-gen.tar
 	@echo "镜像上传完成"
 
 # 远程启动服务

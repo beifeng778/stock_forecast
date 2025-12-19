@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -34,7 +35,7 @@ func InitRedis() error {
 		return fmt.Errorf("Redis连接失败: %v", err)
 	}
 
-	fmt.Printf("Redis连接成功: %s\n", addr)
+	log.Printf("[INFO][redis] connected: addr=%s", addr)
 	return nil
 }
 

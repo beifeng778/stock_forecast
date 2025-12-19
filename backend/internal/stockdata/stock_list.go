@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +37,29 @@ var HTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
 
+func isStockdataDebug() bool {
+	v := strings.TrimSpace(os.Getenv("STOCKDATA_DEBUG"))
+	if v == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false
+	}
+	return b
+}
+
+func stockdataDebugf(format string, args ...any) {
+	if !isStockdataDebug() {
+		return
+	}
+	log.Printf("[DEBUG][stockdata] "+format, args...)
+}
+
+func stockdataErrorf(format string, args ...any) {
+	log.Printf("[ERROR][stockdata] "+format, args...)
+}
+
 // GetStockList 获取A股股票列表
 func GetStockList() ([]Stock, error) {
 	return GetStockListWithRefresh(false)
@@ -52,7 +78,7 @@ func RefreshStockCache() ([]Stock, error) {
 		return nil, fmt.Errorf("保存到缓存失败: %v", err)
 	}
 
-	fmt.Printf("股票缓存全量刷新完成: %d 只股票\n", len(newStocks))
+	stockdataDebugf("股票缓存全量刷新完成: %d 只股票", len(newStocks))
 	return newStocks, nil
 }
 
@@ -71,7 +97,7 @@ func GetStockListWithRefresh2(forceRefresh bool) ([]Stock, bool) {
 	if !forceRefresh {
 		var cachedStocks []Stock
 		if err := getCacheProvider().Get(stockListCacheKey, &cachedStocks); err == nil && len(cachedStocks) > 0 {
-			fmt.Printf("从Redis缓存获取 %d 只股票\n", len(cachedStocks))
+			stockdataDebugf("从Redis缓存获取 %d 只股票", len(cachedStocks))
 			return cachedStocks, true
 		}
 	}
@@ -111,14 +137,14 @@ func GetStockListWithRefresh2(forceRefresh bool) ([]Stock, bool) {
 		for _, s := range stockMap {
 			finalStocks = append(finalStocks, s)
 		}
-		fmt.Printf("增量更新: 新增 %d 只股票, 总计 %d 只\n", newCount, len(finalStocks))
+		stockdataDebugf("增量更新: 新增 %d 只股票, 总计 %d 只", newCount, len(finalStocks))
 	} else {
 		finalStocks = newStocks
-		fmt.Printf("全量更新: 获取 %d 只股票\n", len(finalStocks))
+		stockdataDebugf("全量更新: 获取 %d 只股票", len(finalStocks))
 	}
 
 	if err := getCacheProvider().Set(stockListCacheKey, finalStocks, cacheDuration); err != nil {
-		fmt.Printf("保存到缓存失败: %v\n", err)
+		log.Printf("保存到缓存失败: %v", err)
 	}
 
 	return finalStocks, false
@@ -134,9 +160,9 @@ func fetchAndMergeStocks() []Stock {
 		for _, s := range emStocks {
 			stockMap[s.Code] = s
 		}
-		fmt.Printf("东方财富贡献 %d 只股票\n", len(emStocks))
+		stockdataDebugf("东方财富贡献 %d 只股票", len(emStocks))
 	} else {
-		fmt.Printf("东方财富获取失败: %v\n", err)
+		stockdataErrorf("东方财富获取失败: %v", err)
 	}
 
 	// 从新浪获取
@@ -149,9 +175,9 @@ func fetchAndMergeStocks() []Stock {
 				added++
 			}
 		}
-		fmt.Printf("新浪贡献 %d 只新股票（总获取 %d 只）\n", added, len(sinaStocks))
+		stockdataDebugf("新浪贡献 %d 只新股票（总获取 %d 只）", added, len(sinaStocks))
 	} else {
-		fmt.Printf("新浪获取失败: %v\n", err)
+		stockdataErrorf("新浪获取失败: %v", err)
 	}
 
 	// 转换为数组
@@ -160,7 +186,7 @@ func fetchAndMergeStocks() []Stock {
 		result = append(result, s)
 	}
 
-	fmt.Printf("合并去重后总计: %d 只股票\n", len(result))
+	stockdataDebugf("合并去重后总计: %d 只股票", len(result))
 	return result
 }
 
@@ -179,9 +205,9 @@ func fetchStockListFromEM() ([]Stock, error) {
 				shCount++
 			}
 		}
-		fmt.Printf("东方财富沪市主板: 获取 %d 只, 过滤后 %d 只\n", len(shStocks), shCount)
+		stockdataDebugf("东方财富沪市主板: 获取 %d 只, 过滤后 %d 只", len(shStocks), shCount)
 	} else {
-		fmt.Printf("获取沪市主板股票失败: %v\n", err)
+		stockdataErrorf("获取沪市主板股票失败: %v", err)
 	}
 
 	// 获取深市主板 (00开头)
@@ -195,9 +221,9 @@ func fetchStockListFromEM() ([]Stock, error) {
 				szCount++
 			}
 		}
-		fmt.Printf("东方财富深市主板: 获取 %d 只, 过滤后 %d 只\n", len(szStocks), szCount)
+		stockdataDebugf("东方财富深市主板: 获取 %d 只, 过滤后 %d 只", len(szStocks), szCount)
 	} else {
-		fmt.Printf("获取深市主板股票失败: %v\n", err)
+		stockdataErrorf("获取深市主板股票失败: %v", err)
 	}
 
 	// 获取创业板 (300开头)
@@ -211,9 +237,9 @@ func fetchStockListFromEM() ([]Stock, error) {
 				cyCount++
 			}
 		}
-		fmt.Printf("东方财富创业板: 获取 %d 只, 过滤后 %d 只\n", len(cyStocks), cyCount)
+		stockdataDebugf("东方财富创业板: 获取 %d 只, 过滤后 %d 只", len(cyStocks), cyCount)
 	} else {
-		fmt.Printf("获取创业板股票失败: %v\n", err)
+		stockdataErrorf("获取创业板股票失败: %v", err)
 	}
 
 	// 获取科创板 (688开头)
@@ -227,12 +253,12 @@ func fetchStockListFromEM() ([]Stock, error) {
 				kcCount++
 			}
 		}
-		fmt.Printf("东方财富科创板: 获取 %d 只, 过滤后 %d 只\n", len(kcStocks), kcCount)
+		stockdataDebugf("东方财富科创板: 获取 %d 只, 过滤后 %d 只", len(kcStocks), kcCount)
 	} else {
-		fmt.Printf("获取科创板股票失败: %v\n", err)
+		stockdataErrorf("获取科创板股票失败: %v", err)
 	}
 
-	fmt.Printf("东方财富总计: %d 只股票\n", len(allStocks))
+	stockdataDebugf("东方财富总计: %d 只股票", len(allStocks))
 	return allStocks, nil
 }
 
@@ -244,7 +270,7 @@ func fetchStockListFromSina() ([]Stock, error) {
 	for page := 1; page <= 50; page++ {
 		stocks, err := fetchSinaStocks("sh", page)
 		if err != nil {
-			fmt.Printf("新浪沪市第%d页获取失败: %v\n", page, err)
+			stockdataErrorf("新浪沪市第%d页获取失败: %v", page, err)
 			break
 		}
 		if len(stocks) == 0 {
@@ -252,7 +278,7 @@ func fetchStockListFromSina() ([]Stock, error) {
 		}
 		allStocks = append(allStocks, stocks...)
 	}
-	fmt.Printf("新浪沪市获取到 %d 只股票\n", len(allStocks))
+	stockdataDebugf("新浪沪市获取到 %d 只股票", len(allStocks))
 
 	shCount := len(allStocks)
 
@@ -260,7 +286,7 @@ func fetchStockListFromSina() ([]Stock, error) {
 	for page := 1; page <= 50; page++ {
 		stocks, err := fetchSinaStocks("sz", page)
 		if err != nil {
-			fmt.Printf("新浪深市第%d页获取失败: %v\n", page, err)
+			stockdataErrorf("新浪深市第%d页获取失败: %v", page, err)
 			break
 		}
 		if len(stocks) == 0 {
@@ -268,13 +294,13 @@ func fetchStockListFromSina() ([]Stock, error) {
 		}
 		allStocks = append(allStocks, stocks...)
 	}
-	fmt.Printf("新浪深市获取到 %d 只股票\n", len(allStocks)-shCount)
+	stockdataDebugf("新浪深市获取到 %d 只股票", len(allStocks)-shCount)
 
 	if len(allStocks) == 0 {
 		return nil, fmt.Errorf("获取股票列表失败")
 	}
 
-	fmt.Printf("从新浪总共获取到 %d 只股票\n", len(allStocks))
+	stockdataDebugf("从新浪总共获取到 %d 只股票", len(allStocks))
 	return allStocks, nil
 }
 
@@ -306,9 +332,9 @@ func fetchSinaStocks(market string, page int) ([]Stock, error) {
 	}
 
 	if err := json.Unmarshal(body, &items); err != nil {
-		// 打印返回内容用于调试
-		fmt.Printf("新浪API返回内容(前200字符): %s\n", string(body[:min(200, len(body))]))
-		return nil, fmt.Errorf("%v: %s", err, string(body[:min(100, len(body))]))
+		// 打印返回内容用于调试（避免将 HTML/大段内容拼进 error，刷屏）
+		stockdataDebugf("新浪API返回内容(前200字符): %s", string(body[:min(200, len(body))]))
+		return nil, fmt.Errorf("新浪API解析失败: %v", err)
 	}
 
 	var stocks []Stock
@@ -351,7 +377,7 @@ func fetchEMStocks(fs string) ([]Stock, error) {
 		}
 
 		if err != nil {
-			fmt.Printf("东方财富第%d页获取失败: %v\n", page, err)
+			stockdataErrorf("东方财富第%d页获取失败: %v", page, err)
 			break
 		}
 		if len(stocks) == 0 {
@@ -366,7 +392,7 @@ func fetchEMStocks(fs string) ([]Stock, error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	fmt.Printf("从东方财富获取到 %d 只股票\n", len(allStocks))
+	stockdataDebugf("从东方财富获取到 %d 只股票", len(allStocks))
 	return allStocks, nil
 }
 
@@ -380,14 +406,14 @@ func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
 
 	resp, err := HTTPClient.Do(req)
 	if err != nil {
-		fmt.Printf("请求东方财富API失败: %v\n", err)
+		stockdataErrorf("请求东方财富API失败: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("读取响应失败: %v\n", err)
+		stockdataErrorf("读取响应失败: %v", err)
 		return nil, err
 	}
 
@@ -399,7 +425,7 @@ func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		fmt.Printf("解析JSON失败: %v, body: %s\n", err, string(body[:min(200, len(body))]))
+		stockdataErrorf("解析JSON失败: %v, body: %s", err, string(body[:min(200, len(body))]))
 		return nil, err
 	}
 
@@ -414,7 +440,7 @@ func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
 
 	// 检查 diff 是否为空
 	if len(result.Data.Diff) == 0 || string(result.Data.Diff) == "null" {
-		fmt.Printf("东方财富返回空数据, fs=%s\n", fs)
+		stockdataErrorf("东方财富返回空数据, fs=%s", fs)
 		return nil, fmt.Errorf("东方财富返回空数据")
 	}
 
@@ -423,7 +449,7 @@ func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
 		// 如果失败，尝试解析为对象（key-value 形式，如 {"0": {...}, "1": {...}}）
 		var diffMap map[string]DiffItem
 		if err2 := json.Unmarshal(result.Data.Diff, &diffMap); err2 != nil {
-			fmt.Printf("解析diff失败(数组): %v, 解析diff失败(对象): %v\n", err, err2)
+			stockdataErrorf("解析diff失败(数组): %v, 解析diff失败(对象): %v", err, err2)
 			return nil, err
 		}
 		// 从对象转换为数组
@@ -441,7 +467,7 @@ func fetchEMStocksPage(fs string, page, pageSize int) ([]Stock, error) {
 		})
 	}
 
-	fmt.Printf("从东方财富获取到 %d 只股票\n", len(stocks))
+	stockdataDebugf("从东方财富获取到 %d 只股票", len(stocks))
 	return stocks, nil
 }
 
@@ -477,7 +503,7 @@ func SearchStocksWithRefresh(keyword string, forceRefresh bool) ([]Stock, bool, 
 		return nil, false, true
 	}
 
-	fmt.Printf("股票总数: %d, 搜索关键词: %s\n", len(allStocks), keyword)
+	stockdataDebugf("股票总数: %d, 搜索关键词: %s", len(allStocks), keyword)
 
 	if keyword == "" {
 		return allStocks, fromCache, refreshFailed

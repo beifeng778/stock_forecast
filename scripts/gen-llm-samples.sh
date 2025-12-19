@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "生成 LLM 蒸馏样本(llm_samples.db)..."
+echo "[INFO][sample-gen] 生成 LLM 蒸馏样本(llm_samples.db)..."
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

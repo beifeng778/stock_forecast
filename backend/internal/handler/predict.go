@@ -3,9 +3,10 @@ package handler
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"stock-forecast-backend/internal/model"
 	"stock-forecast-backend/internal/service"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Predict 股票预测
@@ -29,7 +30,7 @@ func Predict(c *gin.Context) {
 		req.Period = "daily"
 	}
 
-	results, err := service.PredictStocks(req.StockCodes, req.Period)
+	status, created, err := service.CreatePredictTask(req.StockCodes, req.Period, req.RequestID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -37,7 +38,10 @@ func Predict(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, model.PredictResponse{
-		Results: results,
-	})
+	type PredictTaskCreateResponse struct {
+		service.PredictTaskStatus
+		Created bool `json:"created"`
+	}
+
+	c.JSON(http.StatusOK, PredictTaskCreateResponse{PredictTaskStatus: status, Created: created})
 }

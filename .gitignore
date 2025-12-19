@@ -3,3 +3,4 @@ SESSION_SUMMARY.md
 Makefile
 *.tar
 .windsurf
+*.db
