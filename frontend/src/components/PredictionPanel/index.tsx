@@ -59,12 +59,17 @@ const useDragScroll = (uniqueId?: string) => {
     element.style.touchAction = "pan-x pinch-zoom";
     element.style.overflowX = "auto";
     element.style.scrollbarWidth = "none";
+    (element.style as any).webkitOverflowScrolling = "touch";
 
     const getMaxScroll = () => element.scrollWidth - element.clientWidth;
 
     const handlePointerDown = (e: PointerEvent) => {
       // 仅左键/触控笔/触摸触发
       if (e.pointerType === "mouse" && e.button !== 0) {
+        return;
+      }
+      // 移动端触控使用原生惯性滚动，避免卡顿
+      if (e.pointerType === "touch") {
         return;
       }
 
