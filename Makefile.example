@@ -10,7 +10,7 @@ REGISTRY ?= localhost:5000
 # 镜像配置
 VERSION ?= 1.0.0
 
-.PHONY: help build-frontend deploy-frontend build-images push-images build-sample-gen push-sample-gen deploy deploy-db start-remote
+.PHONY: help build-frontend deploy-frontend build-images push-images build-sample-gen push-sample-gen deploy deploy-sample-gen deploy-db start-remote start-remote-sample-gen
 
 help:
 	@echo "使用方法:"
@@ -22,7 +22,9 @@ help:
 	@echo "  make push-sample-gen   - 上传 sample-gen 镜像到服务器并加载"
 	@echo "  make deploy-db         - 部署数据库(Redis)"
 	@echo "  make start-remote      - 远程启动服务"
+	@echo "  make start-remote-sample-gen - 远程仅重启 sample-gen"
 	@echo "  make deploy            - 完整部署流程"
+	@echo "  make deploy-sample-gen - 仅部署 sample-gen"
 
 # 构建前端
 build-frontend:
@@ -77,6 +79,11 @@ start-remote:
 	scp compose/docker-compose.yml backend/.env $(PROD_HOST):$(REMOTE_DIR)/
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate"
 
+# 远程仅重启 sample-gen
+start-remote-sample-gen:
+	scp compose/docker-compose.yml backend/.env $(PROD_HOST):$(REMOTE_DIR)/
+	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate sample-gen"
+
 # 部署数据库(Redis)
 deploy-db:
 	@echo "Uploading DB compose file..."
@@ -88,3 +95,7 @@ deploy-db:
 # 完整部署
 deploy: deploy-frontend deploy-db build-images push-images start-remote
 	@echo "部署完成"
+
+# 仅部署 sample-gen
+deploy-sample-gen: build-sample-gen push-sample-gen start-remote-sample-gen
+	@echo "sample-gen 部署完成"
