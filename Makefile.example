@@ -10,85 +10,85 @@ REGISTRY ?= localhost:5000
 # 镜像配置
 VERSION ?= 1.0.0
 
-.PHONY: help build-frontend deploy-frontend build-images push-images build-sample-gen push-sample-gen deploy deploy-sample-gen deploy-db start-remote start-remote-sample-gen
+.PHONY: help build-frontend deploy-frontend build-images push-images build-sample-gen push-sample-gen deploy-backend deploy-sample-gen deploy-db start-remote start-remote-sample-gen
 
 help:
-	@echo "使用方法:"
-	@echo "  make build-frontend    - 构建前端"
-	@echo "  make deploy-frontend   - 部署前端到生产环境"
-	@echo "  make build-images      - 构建Docker镜像"
-	@echo "  make push-images       - 上传镜像到服务器并加载"
-	@echo "  make build-sample-gen  - 构建 sample-gen 镜像"
-	@echo "  make push-sample-gen   - 上传 sample-gen 镜像到服务器并加载"
-	@echo "  make deploy-db         - 部署数据库(Redis)"
-	@echo "  make start-remote      - 远程启动服务"
-	@echo "  make start-remote-sample-gen - 远程仅重启 sample-gen"
-	@echo "  make deploy            - 完整部署流程"
-	@echo "  make deploy-sample-gen - 仅部署 sample-gen"
+	@echo "Usage:"
+	@echo "  make build-frontend    - Build frontend"
+	@echo "  make deploy-frontend   - Deploy frontend to production"
+	@echo "  make build-images      - Build Docker images"
+	@echo "  make push-images       - Push images to server and load"
+	@echo "  make build-sample-gen  - Build sample-gen Docker image"
+	@echo "  make push-sample-gen   - Push sample-gen image to server and load"
+	@echo "  make deploy-db         - Deploy database (Redis)"
+	@echo "  make start-remote      - Start remote services"
+	@echo "  make start-remote-sample-gen - Restart remote sample-gen only"
+	@echo "  make deploy-backend    - Full backend deployment"
+	@echo "  make deploy-sample-gen - Deploy sample-gen only"
 
-# 构建前端
+# Build frontend
 build-frontend:
 	cd frontend && npm install && npx vite build
 
-# 部署前端到生产环境
+# Deploy frontend to production
 deploy-frontend: build-frontend
-	@echo "打包前端文件..."
+	@echo "Packaging frontend files..."
 	cd frontend && tar -czf ../frontend.tar.gz -C dist .
-	@echo "上传到服务器..."
+	@echo "Uploading to server..."
 	scp frontend.tar.gz $(PROD_HOST):$(REMOTE_DIR)/
-	@echo "解压并部署..."
+	@echo "Extracting and deploying..."
 	ssh $(PROD_HOST) "rm -rf $(NGINX_DIR)_bak && mv $(NGINX_DIR) $(NGINX_DIR)_bak 2>/dev/null || true && mkdir -p $(NGINX_DIR) && tar -xzf $(REMOTE_DIR)/frontend.tar.gz -C $(NGINX_DIR) && rm -f $(REMOTE_DIR)/frontend.tar.gz && nginx -s reload"
-	@echo "清理本地tar包..."
+	@echo "Cleaning up local tar..."
 	rm -f frontend.tar.gz
-	@echo "前端部署完成"
+	@echo "Frontend deployment completed"
 
-# 构建Docker镜像
+# Build Docker images
 build-images:
 	docker build -t $(REGISTRY)/stock-forecast-backend:$(VERSION) ./backend
 
-# 构建 sample-gen 镜像
+# Build sample-gen Docker image
 build-sample-gen:
 	docker build -t $(REGISTRY)/stock-forecast-sample-gen:$(VERSION) -f sample-gen/Dockerfile .
 
-# 推送镜像到服务器
+# Push images to server
 push-images:
-	@echo "导出镜像为tar包..."
+	@echo "Exporting image to tar..."
 	docker save -o backend.tar $(REGISTRY)/stock-forecast-backend:$(VERSION)
-	@echo "上传镜像到服务器..."
+	@echo "Uploading image to server..."
 	scp backend.tar $(PROD_HOST):$(REMOTE_DIR)/
-	@echo "在服务器加载镜像..."
+	@echo "Loading image on server..."
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker load -i backend.tar && rm -f backend.tar"
-	@echo "清理本地tar包..."
+	@echo "Cleaning up local tar..."
 	rm -f backend.tar
-	@echo "镜像上传完成"
+	@echo "Image upload completed"
 
-# 推送 sample-gen 镜像到服务器
+# Push sample-gen image to server
 push-sample-gen:
-	@echo "导出镜像为tar包..."
+	@echo "Exporting image to tar..."
 	docker save -o sample-gen.tar $(REGISTRY)/stock-forecast-sample-gen:$(VERSION)
-	@echo "上传镜像到服务器..."
+	@echo "Uploading image to server..."
 	scp sample-gen.tar $(PROD_HOST):$(REMOTE_DIR)/
-	@echo "在服务器加载镜像..."
+	@echo "Loading image on server..."
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker load -i sample-gen.tar && rm -f sample-gen.tar"
-	@echo "清理本地tar包..."
+	@echo "Cleaning up local tar..."
 	rm -f sample-gen.tar
-	@echo "镜像上传完成"
+	@echo "Image upload completed"
 
-# 远程启动服务
+# Start remote services
 start-remote:
 	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
 	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/backend"
 	scp backend/.env $(PROD_HOST):$(REMOTE_DIR)/backend/
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate backend"
 
-# 远程仅重启 sample-gen
+# Start remote sample-gen only
 start-remote-sample-gen:
 	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
 	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/sample-gen"
 	scp sample-gen/.env $(PROD_HOST):$(REMOTE_DIR)/sample-gen/
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate sample-gen"
 
-# 部署数据库(Redis)
+# Deploy database (Redis)
 deploy-db:
 	@echo "Uploading DB compose file..."
 	scp compose/docker-compose.db.yml $(PROD_HOST):$(REMOTE_DATA_DIR)/
@@ -96,10 +96,10 @@ deploy-db:
 	ssh $(PROD_HOST) "cd $(REMOTE_DATA_DIR) && docker-compose -f docker-compose.db.yml up -d --force-recreate"
 	@echo "DB deployment completed"
 
-# 完整部署
-deploy: deploy-frontend build-images push-images start-remote
-	@echo "部署完成"
+# Full backend deployment
+deploy-backend: deploy-frontend build-images push-images start-remote
+	@echo "Backend deployment completed"
 
-# 仅部署 sample-gen
+# Deploy sample-gen only
 deploy-sample-gen: build-sample-gen push-sample-gen start-remote-sample-gen
-	@echo "sample-gen 部署完成"
+	@echo "sample-gen deployment completed"
