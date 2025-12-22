@@ -459,7 +459,15 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 			}
 			futureKlines = llmFutureKlines
 			if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
-				targetPrices.Short = llmFutureKlines[len(llmFutureKlines)-1].Close
+				llmTargetPrice := llmFutureKlines[len(llmFutureKlines)-1].Close
+				// 检查LLM预测的目标价与趋势判断是否一致
+				if (trend == "up" && llmTargetPrice > indicators.CurrentPrice) ||
+					(trend == "down" && llmTargetPrice < indicators.CurrentPrice) ||
+					(trend == "sideways") {
+					// 趋势一致，使用LLM预测的目标价
+					targetPrices.Short = llmTargetPrice
+				}
+				// 如果不一致，保持使用技术分析计算的目标价
 			}
 		} else if llmErr != nil {
 			log.Printf("[ERROR][LLM] PredictOHLCV失败(%s): %v", code, llmErr)
@@ -504,7 +512,15 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 			}
 			futureKlines = llmFutureKlines
 			if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
-				targetPrices.Short = llmFutureKlines[len(llmFutureKlines)-1].Close
+				llmTargetPrice := llmFutureKlines[len(llmFutureKlines)-1].Close
+				// 检查LLM预测的目标价与趋势判断是否一致
+				if (trend == "up" && llmTargetPrice > indicators.CurrentPrice) ||
+					(trend == "down" && llmTargetPrice < indicators.CurrentPrice) ||
+					(trend == "sideways") {
+					// 趋势一致，使用LLM预测的目标价
+					targetPrices.Short = llmTargetPrice
+				}
+				// 如果不一致，保持使用技术分析计算的目标价
 			}
 		} else if llmErr != nil {
 			log.Printf("[ERROR][LLM] PredictOHLCV失败(%s): %v", code, llmErr)
