@@ -381,7 +381,9 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                     result.daily_changes.length > 0 &&
                     (() => {
                       // 过滤掉当天未收盘的数据，只取已收盘的最近5天
-                      const today = new Date().toISOString().split("T")[0];
+                      // 使用本地时间而不是UTC时间
+                      const now = new Date();
+                      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
                       const closedDays = result.daily_changes.filter(
                         (item) => item.date < today
                       );

@@ -1451,3 +1451,271 @@ func AnalyzeNewsImpact(code, name string, news []NewsItem) NewsImpact {
 
 	return impact
 }
+
+// IntegratedPredictionResult 综合预测结果
+type IntegratedPredictionResult struct {
+	Trend       string  `json:"trend"`        // up/down/sideways
+	TrendCN     string  `json:"trend_cn"`     // 看涨/看跌/震荡
+	Confidence  float64 `json:"confidence"`   // 置信度 0-1
+	TargetPrice float64 `json:"target_price"` // 目标价格
+	Reasoning   string  `json:"reasoning"`    // 推理过程
+}
+
+// PredictIntegrated 综合预测：基于样本库统计 + 技术指标 + 新闻分析
+func PredictIntegrated(code, name string, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, samplesOutcome []float64, currentPrice float64) (*IntegratedPredictionResult, error) {
+	ensureLLMConfig()
+
+	if llmAuthToken == "" {
+		// 回退到本地逻辑
+		return predictIntegratedFallback(code, name, indicators, signals, samplesOutcome, currentPrice)
+	}
+
+	// 构建样本库统计信息
+	samplesStats := buildSamplesStats(samplesOutcome)
+
+	// 构建综合预测prompt
+	prompt := buildIntegratedPrompt(code, name, indicators, signals, news, samplesStats)
+
+	// 调用LLM
+	result, err := callLLMForIntegratedPrediction(prompt)
+	if err != nil {
+		log.Printf("[WARN][LLM] 综合预测失败，使用回退逻辑: %v", err)
+		return predictIntegratedFallback(code, name, indicators, signals, samplesOutcome, currentPrice)
+	}
+
+	return result, nil
+}
+
+// buildSamplesStats 构建样本库统计信息
+func buildSamplesStats(outcomes []float64) string {
+	if len(outcomes) == 0 {
+		return "无历史样本数据"
+	}
+
+	// 计算统计指标
+	sort.Float64s(outcomes)
+	n := len(outcomes)
+
+	p25 := outcomes[n/4]
+	p50 := outcomes[n/2]  // 中位数
+	p75 := outcomes[n*3/4]
+
+	upCount := 0
+	downCount := 0
+	for _, outcome := range outcomes {
+		if outcome > 0.01 { // >1%算上涨
+			upCount++
+		} else if outcome < -0.01 { // <-1%算下跌
+			downCount++
+		}
+	}
+
+	upRate := float64(upCount) / float64(n) * 100
+	downRate := float64(downCount) / float64(n) * 100
+
+	return fmt.Sprintf("历史相似案例统计（%d个样本）：上涨概率%.1f%%，下跌概率%.1f%%，中位数收益%.2f%%，25分位数%.2f%%，75分位数%.2f%%",
+		n, upRate, downRate, p50*100, p25*100, p75*100)
+}
+
+// buildIntegratedPrompt 构建综合预测prompt
+func buildIntegratedPrompt(code, name string, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, samplesStats string) string {
+	// 技术指标摘要
+	techSummary := fmt.Sprintf("RSI:%.1f, MACD:%.3f, 信号线:%.3f, MA5:%.2f, MA20:%.2f",
+		indicators.RSI, indicators.MACD, indicators.Signal, indicators.MA5, indicators.MA20)
+
+	// 技术信号摘要
+	bullishSignals := 0
+	bearishSignals := 0
+	for _, s := range signals {
+		if s.Type == "bullish" {
+			bullishSignals++
+		} else if s.Type == "bearish" {
+			bearishSignals++
+		}
+	}
+
+	// 新闻摘要
+	newsCount := len(news)
+	newsStr := fmt.Sprintf("共%d条新闻", newsCount)
+	if newsCount > 0 {
+		newsStr += "，最新：" + news[0].Title
+	}
+
+	return fmt.Sprintf(`你是一位专业的股票分析师，请基于以下信息对股票%s（%s）进行综合预测：
+
+**历史样本分析**：
+%s
+
+**技术指标**：
+%s
+
+**技术信号**：
+看涨信号%d个，看跌信号%d个
+
+**新闻面**：
+%s
+
+**任务要求**：
+1. 综合考虑历史样本统计、技术指标和新闻面
+2. 给出明确的趋势判断：看涨/看跌/震荡
+3. 提供置信度评分（0-100）
+4. 预测5日后目标价格
+5. 简要说明推理过程
+
+请以JSON格式回复：
+{
+  "trend": "up/down/sideways",
+  "trend_cn": "看涨/看跌/震荡",
+  "confidence": 0.75,
+  "target_price": 16.80,
+  "reasoning": "基于历史样本显示75%%概率上涨，当前RSI处于超卖区域，MACD即将金叉，综合判断看涨"
+}`, code, name, samplesStats, techSummary, bullishSignals, bearishSignals, newsStr)
+}
+
+// callLLMForIntegratedPrediction 调用LLM进行综合预测
+func callLLMForIntegratedPrediction(prompt string) (*IntegratedPredictionResult, error) {
+	reqBody := map[string]interface{}{
+		"model": llmModel,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+		"temperature": 0.1, // 降低随机性，提高一致性
+		"max_tokens":  500,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", llmBaseURL+"/v1/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+llmAuthToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var apiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %v", err)
+	}
+
+	if len(apiResp.Choices) == 0 {
+		return nil, fmt.Errorf("no response choices")
+	}
+
+	content := strings.TrimSpace(apiResp.Choices[0].Message.Content)
+
+	// 解析JSON响应
+	var result IntegratedPredictionResult
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		return nil, fmt.Errorf("parse LLM response: %v", err)
+	}
+
+	// 验证和修正结果
+	if result.Confidence > 1.0 {
+		result.Confidence = result.Confidence / 100.0 // 转换百分比到小数
+	}
+	if result.Confidence < 0.1 {
+		result.Confidence = 0.1
+	}
+	if result.Confidence > 1.0 {
+		result.Confidence = 1.0
+	}
+
+	return &result, nil
+}
+
+// predictIntegratedFallback 回退的综合预测逻辑
+func predictIntegratedFallback(code, name string, indicators model.TechnicalIndicators, signals []model.Signal, samplesOutcome []float64, currentPrice float64) (*IntegratedPredictionResult, error) {
+	// 基于样本库统计
+	samplesScore := 0.0
+	if len(samplesOutcome) > 0 {
+		upCount := 0
+		for _, outcome := range samplesOutcome {
+			if outcome > 0.01 {
+				upCount++
+			}
+		}
+		samplesScore = float64(upCount) / float64(len(samplesOutcome))
+	}
+
+	// 基于技术信号
+	bullishCount := 0
+	bearishCount := 0
+	for _, s := range signals {
+		if s.Type == "bullish" {
+			bullishCount++
+		} else if s.Type == "bearish" {
+			bearishCount++
+		}
+	}
+
+	signalsScore := 0.5
+	if bullishCount+bearishCount > 0 {
+		signalsScore = float64(bullishCount) / float64(bullishCount+bearishCount)
+	}
+
+	// 综合评分（样本库权重60%，技术信号权重40%）
+	finalScore := samplesScore*0.6 + signalsScore*0.4
+
+	var trend, trendCN string
+	var confidence float64
+
+	if finalScore > 0.6 {
+		trend = "up"
+		trendCN = "看涨"
+		confidence = finalScore
+	} else if finalScore < 0.4 {
+		trend = "down"
+		trendCN = "看跌"
+		confidence = 1.0 - finalScore
+	} else {
+		trend = "sideways"
+		trendCN = "震荡"
+		confidence = 0.5
+	}
+
+	// 计算目标价
+	targetPrice := currentPrice
+	if trend == "up" {
+		targetPrice = currentPrice * (1 + 0.03*confidence)
+	} else if trend == "down" {
+		targetPrice = currentPrice * (1 - 0.03*confidence)
+	}
+
+	reasoning := fmt.Sprintf("样本库统计显示%.1f%%上涨概率，技术信号评分%.1f，综合判断%s",
+		samplesScore*100, signalsScore, trendCN)
+
+	return &IntegratedPredictionResult{
+		Trend:       trend,
+		TrendCN:     trendCN,
+		Confidence:  confidence,
+		TargetPrice: targetPrice,
+		Reasoning:   reasoning,
+	}, nil
+}
