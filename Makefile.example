@@ -97,7 +97,7 @@ deploy-db:
 	@echo "DB deployment completed"
 
 # Full backend deployment
-deploy-backend: deploy-frontend build-images push-images start-remote
+deploy-backend: build-images push-images start-remote
 	@echo "Backend deployment completed"
 
 # Deploy sample-gen only
