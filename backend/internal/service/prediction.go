@@ -1243,25 +1243,25 @@ func calculateTargetPricesWithNews(currentPrice float64, trend string, confidenc
 	}
 
 	// 根据新闻预期价格影响调整目标价位
-	newsAdjustment := 1.0 + newsImpact.PriceImpact
-
 	// 重要性等级越高，影响越大
 	impactMultiplier := 1.0 + float64(newsImpact.ImportanceLevel-2)*0.2 // 等级3=1.2x, 等级4=1.4x, 等级5=1.6x
 
 	// 应用新闻影响调整
 	if newsImpact.PriceImpact > 0 {
 		// 利好新闻：上调目标价位
+		adjustmentFactor := newsImpact.PriceImpact * impactMultiplier
 		return model.TargetPrices{
-			Short:  basePrices.Short * (newsAdjustment * impactMultiplier),
-			Medium: basePrices.Medium * (newsAdjustment * impactMultiplier),
-			Long:   basePrices.Long * (newsAdjustment * impactMultiplier),
+			Short:  basePrices.Short * (1 + adjustmentFactor),
+			Medium: basePrices.Medium * (1 + adjustmentFactor),
+			Long:   basePrices.Long * (1 + adjustmentFactor),
 		}
 	} else if newsImpact.PriceImpact < 0 {
-		// 利空新闻：下调目标价位
+		// 利空新闻：下调目标价位（修复：使用减法而不是除法）
+		adjustmentFactor := math.Abs(newsImpact.PriceImpact) * impactMultiplier
 		return model.TargetPrices{
-			Short:  basePrices.Short * (newsAdjustment / impactMultiplier),
-			Medium: basePrices.Medium * (newsAdjustment / impactMultiplier),
-			Long:   basePrices.Long * (newsAdjustment / impactMultiplier),
+			Short:  basePrices.Short * (1 - adjustmentFactor),
+			Medium: basePrices.Medium * (1 - adjustmentFactor),
+			Long:   basePrices.Long * (1 - adjustmentFactor),
 		}
 	}
 
