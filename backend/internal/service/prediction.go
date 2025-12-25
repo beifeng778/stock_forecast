@@ -807,8 +807,12 @@ func generateFutureKlines(stockCode, stockName string, history []stockdata.Kline
 
 	currentDate := now
 	// 统一设计：future_klines 包含今天的5天预测
-	// isIntraday 参数为 true 时，从今天开始
-	if !isIntraday {
+	// 盘前/盘后：从今天开始预测
+	// 盘中：从今天开始预测（使用未收盘日K）
+	// 注意：isIntraday 参数已废弃，统一从今天开始
+	// 如果今天不是交易日，自动跳到下一个交易日
+	if !holiday.IsTradingDay(currentDate) {
+		// 今天不是交易日，从明天开始找第一个交易日
 		currentDate = currentDate.AddDate(0, 0, 1)
 	}
 

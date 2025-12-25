@@ -213,7 +213,8 @@ const TrendChart: React.FC = () => {
     // 构建X轴日期
     // 如果历史K线已经包含今天，且预测日期的第一个也是今天，则跳过预测日期的第一个（避免重复）
     const now = new Date();
-    const todayStr = now.toISOString().split("T")[0];
+    // 使用本地时间而不是UTC时间
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
     const predFirstDateIsToday = predictionData?.dates?.[0] === todayStr;
 
@@ -261,10 +262,8 @@ const TrendChart: React.FC = () => {
     // 添加预测线
     if (predictionData) {
       const now = new Date();
-      const todayStr = now.toISOString().split("T")[0];
-      const hhmm = getHHMM(now);
-      const isTradingDayNow = isTradingDayUtil(now);
-      const isIntradayNow = isTradingDayNow && hhmm >= 930 && hhmm < 1500;
+      // 使用本地时间而不是UTC时间
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
       const predFirstDateIsToday = predictionData.dates[0] === todayStr;
 
@@ -297,15 +296,15 @@ const TrendChart: React.FC = () => {
         // 使用所有预测数据
         predictionData.klines.forEach((k) => predictionPrices.push(k.close));
       } else {
-        // 情况3：历史K线不包含今天（盘前）
-        // 预测线从昨天开始，需要添加锚点
+        // 情况3：历史K线不包含今天（盘前/盘中）
+        // 添加锚点连接昨天和今天，让视觉更连贯
         for (let i = 0; i < klineData.length - 1; i++) {
           predictionPrices.push(null);
         }
         // 添加锚点（昨天的收盘价）
         const anchorPrice = klineData[klineData.length - 1]?.close ?? 0;
         predictionPrices.push(anchorPrice);
-        // 添加预测数据
+        // 添加预测数据（从今天开始的5天预测）
         predictionData.klines.forEach((k) => predictionPrices.push(k.close));
       }
 
@@ -315,7 +314,14 @@ const TrendChart: React.FC = () => {
         data: predictionPrices,
         smooth: false,
         symbol: "circle",
-        symbolSize: 6,
+        symbolSize: (value: any, params: any) => {
+          // 锚点不显示圆点，只有预测日期显示圆点
+          const idx = params.dataIndex;
+          if (!hasTodayData && idx === klineData.length - 1) {
+            return 0; // 锚点不显示
+          }
+          return value !== null ? 6 : 0;
+        },
         lineStyle: {
           width: 2,
           color: "#f59e0b",
@@ -360,6 +366,7 @@ const TrendChart: React.FC = () => {
         textStyle: {
           color: "#e2e8f0",
         },
+        extraCssText: "max-height: 70vh; overflow-y: auto; overflow-x: hidden;", // 移动端优化：限制最大高度并允许滚动
         hideDelay: 200, // 减少延迟时间，让tooltip更快响应
         showDelay: 0, // 鼠标移入后立即显示
         enterable: false, // 禁止鼠标进入tooltip区域，让它纯粹跟随鼠标
@@ -395,10 +402,16 @@ const TrendChart: React.FC = () => {
             posX = x - tooltipWidth - offsetX;
           }
 
+          // 垂直方向边界检查（移动端优化）
           if (posY < 10) {
             posY = y + 20;
           } else if (posY + tooltipHeight > chartHeight - 10) {
+            // 尝试放在鼠标上方
             posY = y - tooltipHeight - 20;
+            // 如果上方也放不下，则固定在图表底部
+            if (posY < 10) {
+              posY = Math.max(10, chartHeight - tooltipHeight - 10);
+            }
           }
 
           return [posX, posY];
@@ -409,7 +422,9 @@ const TrendChart: React.FC = () => {
             const data = klineData[idx];
             if (!data) return "";
 
-            const today = new Date().toISOString().split("T")[0];
+            // 使用本地时间而不是UTC时间
+            const now = new Date();
+            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
             const isToday = data.date === today;
             const showTodayUnclosedStyle = isToday && isOpenToClose();
             const isValidNumber = (v: unknown): v is number => {
@@ -664,7 +679,8 @@ const TrendChart: React.FC = () => {
           } else {
             // 预测数据
             const now = new Date();
-            const todayStr = now.toISOString().split("T")[0];
+            // 使用本地时间而不是UTC时间
+            const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
             const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
             const predFirstDateIsToday = predictionData?.dates[0] === todayStr;
 
@@ -678,7 +694,9 @@ const TrendChart: React.FC = () => {
             const predKline = predictionData?.klines[predIdx];
             if (!predKline) return "";
             const pred = predictions.find((p) => p.stock_code === currentStock);
-            const today = new Date().toISOString().split("T")[0];
+            // 使用本地时间而不是UTC时间
+            const now2 = new Date();
+            const today = `${now2.getFullYear()}-${String(now2.getMonth() + 1).padStart(2, '0')}-${String(now2.getDate()).padStart(2, '0')}`;
             const isToday = predKline.date === today;
             const label =
               isToday && isOpenToClose() ? "AI预测（今日未收盘）" : "AI预测";
