@@ -391,7 +391,6 @@ func calculateFutureTradingDates(today string, needPredictToday bool, count int)
 	// 解析今天的日期
 	todayDate, err := time.Parse("2006-01-02", today)
 	if err != nil {
-		log.Printf("[WARN][LLM] 无法解析日期 %s: %v", today, err)
 		return nil
 	}
 
@@ -843,7 +842,6 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 
 	// 计算未来5个交易日的日期
 	futureTradingDates := calculateFutureTradingDates(today, needPredictToday, 5)
-	log.Printf("[DEBUG][LLM] 传给LLM的未来交易日: %v", futureTradingDates)
 
 	prompt := buildOHLCVPrompt(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, topSamples, futureTradingDates)
 	cacheKey := ohlcvCacheKey(llmModel, prompt)

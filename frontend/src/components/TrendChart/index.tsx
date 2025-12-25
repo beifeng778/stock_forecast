@@ -217,27 +217,11 @@ const TrendChart: React.FC = () => {
     const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
     const predFirstDateIsToday = predictionData?.dates?.[0] === todayStr;
 
-    // 调试日志
-    if (predictionData) {
-      console.log("[TrendChart] 历史K线最后一个日期:", klineData[klineData.length - 1]?.date);
-      console.log("[TrendChart] 今天:", todayStr);
-      console.log("[TrendChart] hasTodayData:", hasTodayData);
-      console.log("[TrendChart] 预测日期:", predictionData.dates);
-      console.log("[TrendChart] predFirstDateIsToday:", predFirstDateIsToday);
-      console.log("[TrendChart] 预测数据数量:", predictionData.klines.length);
-    }
-
     const allDates = predictionData
       ? hasTodayData && predFirstDateIsToday
         ? [...dates, ...predictionData.dates.slice(1)] // 跳过第一个日期（今天），避免重复
         : [...dates, ...predictionData.dates] // 历史不包含今天，或预测第一个不是今天，全部添加
       : dates;
-
-    // 调试日志
-    if (predictionData) {
-      console.log("[TrendChart] X轴日期数量:", allDates.length);
-      console.log("[TrendChart] X轴最后5个日期:", allDates.slice(-5));
-    }
 
     // 计算默认显示范围：最近5个工作日 + 预测5天
     const totalDays = allDates.length;
@@ -293,8 +277,17 @@ const TrendChart: React.FC = () => {
         for (let i = 0; i < klineData.length - 1; i++) {
           predictionPrices.push(null);
         }
-        // 使用所有5个预测数据（第一个覆盖历史K线的最后一个点，后面4个对应X轴的新日期）
-        predictionData.klines.forEach((k) => predictionPrices.push(k.close));
+        // 如果有aiToday，优先使用aiToday作为今天的预测值
+        if (predictionData.aiToday) {
+          predictionPrices.push(predictionData.aiToday.close);
+          // 使用klines[1-4]作为未来4天的预测值
+          for (let i = 1; i < predictionData.klines.length; i++) {
+            predictionPrices.push(predictionData.klines[i].close);
+          }
+        } else {
+          // 没有aiToday，使用所有5个预测数据
+          predictionData.klines.forEach((k) => predictionPrices.push(k.close));
+        }
       } else if (hasTodayData && !predFirstDateIsToday) {
         // 情况2：历史K线包含今天，但预测第一个不是今天
         // X轴没有跳过，预测线从历史K线的最后一个位置开始
@@ -320,7 +313,7 @@ const TrendChart: React.FC = () => {
         name: "AI预测(5日)",
         type: "line",
         data: predictionPrices,
-        smooth: true,
+        smooth: false,
         symbol: "circle",
         symbolSize: 6,
         lineStyle: {

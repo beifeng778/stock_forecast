@@ -136,29 +136,19 @@ func sanitizeLLMKlines(stockCode, stockName string, prevClose float64, in []mode
 		return in
 	}
 
-	log.Printf("[DEBUG][Prediction] LLM返回的K线数量: %d", len(in))
-	for i, k := range in {
-		log.Printf("[DEBUG][Prediction] LLM返回的K线[%d]: date=%s close=%.2f", i, k.Date, k.Close)
-	}
-
 	// 第一步：过滤非交易日
 	tradingDayKlines := make([]model.KlineData, 0, len(in))
 	for _, k := range in {
 		// 解析日期
 		date, err := time.Parse("2006-01-02", k.Date)
 		if err != nil {
-			log.Printf("[WARN][Prediction] 无法解析日期 %s: %v", k.Date, err)
 			continue
 		}
 		// 只保留交易日
 		if holiday.IsTradingDay(date) {
 			tradingDayKlines = append(tradingDayKlines, k)
-		} else {
-			log.Printf("[DEBUG][Prediction] LLM预测包含非交易日，已过滤: %s", k.Date)
 		}
 	}
-
-	log.Printf("[DEBUG][Prediction] 过滤后的K线数量: %d", len(tradingDayKlines))
 
 	// 第二步：对交易日K线进行涨跌停限制和数据清洗
 	cap := getDailyPriceLimitPercent(stockCode, stockName)
@@ -507,9 +497,6 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 				for i := range llmFutureKlines {
 					llmFutureKlines[i].Date = futureKlines[i].Date
 				}
-				log.Printf("[DEBUG][Prediction] 已修正LLM返回的日期，使用本地生成的正确日期")
-			} else {
-				log.Printf("[WARN][Prediction] LLM返回的K线数量(%d)与本地预测(%d)不一致，无法修正日期", len(llmFutureKlines), len(futureKlines))
 			}
 
 			if llmAiToday != nil {
@@ -577,9 +564,6 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 				for i := range llmFutureKlines {
 					llmFutureKlines[i].Date = futureKlines[i].Date
 				}
-				log.Printf("[DEBUG][Prediction] 已修正LLM返回的日期，使用本地生成的正确日期")
-			} else {
-				log.Printf("[WARN][Prediction] LLM返回的K线数量(%d)与本地预测(%d)不一致，无法修正日期", len(llmFutureKlines), len(futureKlines))
 			}
 
 			if llmAiToday != nil {
@@ -833,9 +817,6 @@ func generateFutureKlines(stockCode, stockName string, history []stockdata.Kline
 		// 使用节假日判断模块，确保只选择交易日
 		if holiday.IsTradingDay(currentDate) {
 			dates = append(dates, currentDate)
-			log.Printf("[DEBUG][Prediction] 添加预测日期: %s (第%d个交易日)", currentDate.Format("2006-01-02"), len(dates))
-		} else {
-			log.Printf("[DEBUG][Prediction] 跳过非交易日: %s", currentDate.Format("2006-01-02"))
 		}
 		currentDate = currentDate.AddDate(0, 0, 1)
 	}

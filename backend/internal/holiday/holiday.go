@@ -86,7 +86,6 @@ func IsTradingDay(date time.Time) bool {
 	if isCustomHoliday {
 		result := false
 		updateCache(dateStr, result)
-		log.Printf("[DEBUG][Holiday] %s 是自定义节假日，不是交易日", dateStr)
 		return result
 	}
 
