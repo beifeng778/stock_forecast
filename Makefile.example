@@ -79,6 +79,8 @@ start-remote:
 	scp compose/docker-compose.yml $(PROD_HOST):$(REMOTE_DIR)/
 	ssh $(PROD_HOST) "mkdir -p $(REMOTE_DIR)/backend"
 	scp backend/.env $(PROD_HOST):$(REMOTE_DIR)/backend/
+	@echo "Uploading holidays.json..."
+	scp backend/holidays.json $(PROD_HOST):$(REMOTE_DIR)/backend/ || echo "Warning: holidays.json not found, using holidays.json.example" && scp backend/holidays.json.example $(PROD_HOST):$(REMOTE_DIR)/backend/holidays.json
 	ssh $(PROD_HOST) "cd $(REMOTE_DIR) && docker-compose up -d --force-recreate backend"
 
 # Start remote sample-gen only

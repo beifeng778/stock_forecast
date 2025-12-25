@@ -10,8 +10,10 @@ services:
       - backend/.env
     environment:
       - LLM_SAMPLES_PATH=/app/rag
+      - HOLIDAY_FILE=/app/holidays.json
     volumes:
       - /home/rainyday/data/rag:/app/rag
+      - /home/rainyday/web/backend/holidays.json:/app/holidays.json
     restart: always
     networks:
       - stock-network
