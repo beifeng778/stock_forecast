@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"stock-forecast-backend/internal/holiday"
 	"stock-forecast-backend/internal/model"
 	"stock-forecast-backend/pkg/llmsamples"
 )
@@ -382,7 +383,38 @@ func extractJSONObject(s string) string {
 	return strings.TrimSpace(text[start : end+1])
 }
 
-func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData, samples []llmSample) string {
+// calculateFutureTradingDates 计算未来N个交易日的日期
+// today: 今天的日期字符串（格式：2006-01-02）
+// needPredictToday: 是否需要预测今天（如果是，第一个日期就是今天）
+// count: 需要的交易日数量
+func calculateFutureTradingDates(today string, needPredictToday bool, count int) []string {
+	// 解析今天的日期
+	todayDate, err := time.Parse("2006-01-02", today)
+	if err != nil {
+		log.Printf("[WARN][LLM] 无法解析日期 %s: %v", today, err)
+		return nil
+	}
+
+	dates := make([]string, 0, count)
+	currentDate := todayDate
+
+	// 如果不需要预测今天，从明天开始
+	if !needPredictToday {
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+
+	// 循环查找交易日
+	for len(dates) < count {
+		if holiday.IsTradingDay(currentDate) {
+			dates = append(dates, currentDate.Format("2006-01-02"))
+		}
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+
+	return dates
+}
+
+func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData, samples []llmSample, futureTradingDates []string) string {
 	var sb strings.Builder
 
 	sb.WriteString("请你作为股票OHLCV预测引擎，严格输出JSON，不要任何解释、不要markdown。\n")
@@ -397,10 +429,20 @@ func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday
 	sb.WriteString(fmt.Sprintf("has_today_actual=%v\n", hasTodayActual))
 	sb.WriteString(fmt.Sprintf("need_predict_today=%v\n", needPredictToday))
 
+	// 添加未来交易日信息
+	if len(futureTradingDates) > 0 {
+		sb.WriteString("\n【未来交易日】\n")
+		sb.WriteString("以下是未来5个交易日的日期（已排除周末和节假日）：\n")
+		for i, date := range futureTradingDates {
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, date))
+		}
+		sb.WriteString("注意：你必须严格按照上述日期生成预测，不要生成周末或节假日的数据。\n")
+	}
+
 	sb.WriteString("\n【约束】\n")
 	sb.WriteString("1) 预测必须只基于给定的历史数据与指标，不允许使用 today 当天的真实行情（即使你知道也不能用）。\n")
 	sb.WriteString("2) 输出字段必须齐全：date/open/high/low/close/volume/amount。\n")
-	sb.WriteString("3) future_klines 必须为5条交易日记录。若 need_predict_today=true，则第1条 date= today；否则 future_klines 从下一个交易日开始。\n")
+	sb.WriteString("3) future_klines 必须为5条交易日记录，date 字段必须严格使用【未来交易日】中给出的日期。\n")
 	sb.WriteString("4) 预测路径必须合理，避免出现极端连板/连续暴涨暴跌式的路径；除非信号与新闻非常强烈且你能在 reasons 中清晰解释。\n")
 	sb.WriteString("5) 预测的成交量/成交额必须与历史数据量级一致，不允许出现 0 或异常夸张的数量级。\n")
 
@@ -799,7 +841,11 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 		}
 	}
 
-	prompt := buildOHLCVPrompt(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, topSamples)
+	// 计算未来5个交易日的日期
+	futureTradingDates := calculateFutureTradingDates(today, needPredictToday, 5)
+	log.Printf("[DEBUG][LLM] 传给LLM的未来交易日: %v", futureTradingDates)
+
+	prompt := buildOHLCVPrompt(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, topSamples, futureTradingDates)
 	cacheKey := ohlcvCacheKey(llmModel, prompt)
 	if ttl := ohlcvCacheTTLNow(); ttl > 0 {
 		now := time.Now()

@@ -80,13 +80,15 @@ func IsTradingDay(date time.Time) bool {
 
 	// 3. 检查自定义节假日配置
 	cacheMu.RLock()
-	if customHolidays[dateStr] {
-		cacheMu.RUnlock()
+	isCustomHoliday := customHolidays[dateStr]
+	cacheMu.RUnlock()
+
+	if isCustomHoliday {
 		result := false
 		updateCache(dateStr, result)
+		log.Printf("[DEBUG][Holiday] %s 是自定义节假日，不是交易日", dateStr)
 		return result
 	}
-	cacheMu.RUnlock()
 
 	// 4. 尝试从API获取
 	if result, ok := checkFromAPI(dateStr); ok {

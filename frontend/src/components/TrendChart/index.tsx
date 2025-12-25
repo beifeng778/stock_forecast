@@ -209,9 +209,35 @@ const TrendChart: React.FC = () => {
 
     const dates = klineData.map((d) => d.date);
     const prices = klineData.map((d) => d.close);
+
+    // 构建X轴日期
+    // 如果历史K线已经包含今天，且预测日期的第一个也是今天，则跳过预测日期的第一个（避免重复）
+    const now = new Date();
+    const todayStr = now.toISOString().split("T")[0];
+    const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
+    const predFirstDateIsToday = predictionData?.dates?.[0] === todayStr;
+
+    // 调试日志
+    if (predictionData) {
+      console.log("[TrendChart] 历史K线最后一个日期:", klineData[klineData.length - 1]?.date);
+      console.log("[TrendChart] 今天:", todayStr);
+      console.log("[TrendChart] hasTodayData:", hasTodayData);
+      console.log("[TrendChart] 预测日期:", predictionData.dates);
+      console.log("[TrendChart] predFirstDateIsToday:", predFirstDateIsToday);
+      console.log("[TrendChart] 预测数据数量:", predictionData.klines.length);
+    }
+
     const allDates = predictionData
-      ? [...dates, ...predictionData.dates]
+      ? hasTodayData && predFirstDateIsToday
+        ? [...dates, ...predictionData.dates.slice(1)] // 跳过第一个日期（今天），避免重复
+        : [...dates, ...predictionData.dates] // 历史不包含今天，或预测第一个不是今天，全部添加
       : dates;
+
+    // 调试日志
+    if (predictionData) {
+      console.log("[TrendChart] X轴日期数量:", allDates.length);
+      console.log("[TrendChart] X轴最后5个日期:", allDates.slice(-5));
+    }
 
     // 计算默认显示范围：最近5个工作日 + 预测5天
     const totalDays = allDates.length;
@@ -256,24 +282,39 @@ const TrendChart: React.FC = () => {
       const isTradingDayNow = isTradingDayUtil(now);
       const isIntradayNow = isTradingDayNow && hhmm >= 930 && hhmm < 1500;
       const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
+      const predFirstDateIsToday = predictionData.dates[0] === todayStr;
 
-      const anchorIndex =
-        hasTodayData && isIntradayNow && klineData.length >= 2
-          ? klineData.length - 2
-          : klineData.length - 1;
-      const anchorPrice =
-        klineData[anchorIndex]?.close ??
-        klineData[klineData.length - 1]?.close ??
-        0;
-
-      // 构建预测收盘价数据（前面填充null，从最后一个历史数据点开始）
+      // 构建预测收盘价数据
       const predictionPrices: (number | null)[] = [];
-      for (let i = 0; i < anchorIndex; i++) {
-        predictionPrices.push(null);
+
+      // 情况1：历史K线已经包含今天，且预测第一个也是今天
+      // X轴跳过了预测的第一个日期，预测线从历史K线的最后一个位置开始，覆盖它
+      if (hasTodayData && predFirstDateIsToday) {
+        for (let i = 0; i < klineData.length - 1; i++) {
+          predictionPrices.push(null);
+        }
+        // 使用所有5个预测数据（第一个覆盖历史K线的最后一个点，后面4个对应X轴的新日期）
+        predictionData.klines.forEach((k) => predictionPrices.push(k.close));
+      } else if (hasTodayData && !predFirstDateIsToday) {
+        // 情况2：历史K线包含今天，但预测第一个不是今天
+        // X轴没有跳过，预测线从历史K线的最后一个位置开始
+        for (let i = 0; i < klineData.length - 1; i++) {
+          predictionPrices.push(null);
+        }
+        // 使用所有预测数据
+        predictionData.klines.forEach((k) => predictionPrices.push(k.close));
+      } else {
+        // 情况3：历史K线不包含今天（盘前）
+        // 预测线从昨天开始，需要添加锚点
+        for (let i = 0; i < klineData.length - 1; i++) {
+          predictionPrices.push(null);
+        }
+        // 添加锚点（昨天的收盘价）
+        const anchorPrice = klineData[klineData.length - 1]?.close ?? 0;
+        predictionPrices.push(anchorPrice);
+        // 添加预测数据
+        predictionData.klines.forEach((k) => predictionPrices.push(k.close));
       }
-      predictionPrices.push(anchorPrice);
-      // 添加预测数据
-      predictionData.klines.forEach((k) => predictionPrices.push(k.close));
 
       series.push({
         name: "AI预测(5日)",
@@ -629,7 +670,18 @@ const TrendChart: React.FC = () => {
             `;
           } else {
             // 预测数据
-            const predIdx = idx - klineData.length;
+            const now = new Date();
+            const todayStr = now.toISOString().split("T")[0];
+            const hasTodayData = klineData[klineData.length - 1]?.date === todayStr;
+            const predFirstDateIsToday = predictionData?.dates[0] === todayStr;
+
+            // 计算预测数据的索引
+            // 如果X轴跳过了预测的第一个日期，predIdx需要加1
+            let predIdx = idx - klineData.length;
+            if (hasTodayData && predFirstDateIsToday) {
+              predIdx += 1; // X轴跳过了第一个预测日期，所以索引需要加1
+            }
+
             const predKline = predictionData?.klines[predIdx];
             if (!predKline) return "";
             const pred = predictions.find((p) => p.stock_code === currentStock);
