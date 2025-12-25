@@ -1,9 +1,10 @@
 import dayjs, { type Dayjs } from "dayjs";
+import { isTradingDay as isTradingDayFromHolidays } from "./holidays";
 
 export const getHHMM = (d: Date): number => d.getHours() * 100 + d.getMinutes();
 
 export const isTradingDay = (d: Date = new Date()): boolean => {
-  return d.getDay() !== 0 && d.getDay() !== 6;
+  return isTradingDayFromHolidays(d);
 };
 
 export const isMarketClosed = (d: Date = new Date()): boolean => {
@@ -25,8 +26,7 @@ export const isTradingTime = (d: Date = new Date()): boolean => {
 };
 
 export const isWorkday = (date: Dayjs): boolean => {
-  const day = date.day();
-  return day !== 0 && day !== 6;
+  return isTradingDayFromHolidays(date.toDate());
 };
 
 export const isFutureDate = (date: Dayjs): boolean => {

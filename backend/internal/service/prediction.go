@@ -6,11 +6,14 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"stock-forecast-backend/internal/holiday"
 	"stock-forecast-backend/internal/langchain"
 	"stock-forecast-backend/internal/model"
 	"stock-forecast-backend/internal/stockdata"
@@ -192,21 +195,11 @@ func sanitizeLLMToday(stockCode, stockName string, prevClose float64, in *model.
 }
 
 func isTradingTimeNow() bool {
-	now := time.Now()
-	wd := now.Weekday()
-	if wd == time.Saturday || wd == time.Sunday {
-		return false
-	}
-	hhmm := now.Hour()*100 + now.Minute()
-	morning := hhmm >= 930 && hhmm < 1130
-	afternoon := hhmm >= 1300 && hhmm < 1500
-	return morning || afternoon
+	return holiday.IsTradingTimeNow()
 }
 
 func isTradingDayNow() bool {
-	now := time.Now()
-	wd := now.Weekday()
-	return wd != time.Saturday && wd != time.Sunday
+	return holiday.IsTradingDayNow()
 }
 
 func isDailyKlineOHLCVComplete(d stockdata.KlineData) bool {
@@ -220,6 +213,20 @@ func isDailyKlineOHLCVComplete(d stockdata.KlineData) bool {
 		return false
 	}
 	return true
+}
+
+// parseTimeToHHMM 解析时间字符串（HH:MM）为整数（HHMM）
+func parseTimeToHHMM(timeStr string) int {
+	parts := strings.Split(timeStr, ":")
+	if len(parts) != 2 {
+		return 1700 // 默认17:00
+	}
+	hour, err1 := strconv.Atoi(parts[0])
+	minute, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return 1700 // 默认17:00
+	}
+	return hour*100 + minute
 }
 
 // PredictStocks 批量预测股票（保持原始顺序）
@@ -312,7 +319,16 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 	hhmm := now.Hour()*100 + now.Minute()
 	last := kline.Data[len(kline.Data)-1]
 	hasTodayData := last.Date == todayStr
-	todayKlineComplete := hasTodayData && hhmm >= 1500 && isDailyKlineOHLCVComplete(last)
+
+	// 判断今天的K线是否完整（已收盘且数据已同步）
+	// 1. 有今天的数据 && OHLCV数据完整 && 时间 >= FRONTEND_REFRESH_AVAILABLE_TIME
+	// FRONTEND_REFRESH_AVAILABLE_TIME 表示数据已同步完成的时间
+	refreshAvailableTime := os.Getenv("FRONTEND_REFRESH_AVAILABLE_TIME")
+	if refreshAvailableTime == "" {
+		refreshAvailableTime = "17:00"
+	}
+	refreshHHMM := parseTimeToHHMM(refreshAvailableTime)
+	todayKlineComplete := hasTodayData && isDailyKlineOHLCVComplete(last) && hhmm >= refreshHHMM
 
 	// 3. 转换技术指标（盘中/当日未收盘：仅用历史完整日K）
 	klineForAnalysis := kline.Data
@@ -406,7 +422,11 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		aiToday = generateTodayKline(code, stockName, kline.Data, targetPricesForTodayPred.Short, supportForTodayPred, resistanceForTodayPred, confidenceForTodayPred, volatilityForTodayPred)
 	}
 
-	futureKlines := generateFutureKlines(code, stockName, kline.Data, isTradingTime, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
+	// 统一设计：三种场景（盘前/盘中/盘后）都预测今天
+	// - aiToday: 今天的预测（用于卡片显示和对比）
+	// - future_klines: 包含今天的5天预测（今天,明天,后天,第4天,第5天）
+	// 总共5个预测节点
+	futureKlines := generateFutureKlines(code, stockName, kline.Data, true, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
 
 	// 11. 使用LLM生成结构化OHLCV预测（ai_today + future_klines），失败则回退本地预测
 	if isBatch {
@@ -753,14 +773,16 @@ func generateFutureKlines(stockCode, stockName string, history []stockdata.Kline
 	_ = resistanceLevel
 
 	currentDate := now
-	if !isIntraday || hasTodayData {
+	// 统一设计：future_klines 包含今天的5天预测
+	// isIntraday 参数为 true 时，从今天开始
+	if !isIntraday {
 		currentDate = currentDate.AddDate(0, 0, 1)
 	}
 
 	dates := make([]time.Time, 0, steps)
 	for len(dates) < steps {
-		wd := currentDate.Weekday()
-		if wd != time.Saturday && wd != time.Sunday {
+		// 使用节假日判断模块，确保只选择交易日
+		if holiday.IsTradingDay(currentDate) {
 			dates = append(dates, currentDate)
 		}
 		currentDate = currentDate.AddDate(0, 0, 1)

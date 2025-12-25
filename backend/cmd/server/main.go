@@ -9,6 +9,7 @@ import (
 
 	"stock-forecast-backend/internal/cache"
 	"stock-forecast-backend/internal/handler"
+	"stock-forecast-backend/internal/holiday"
 	"stock-forecast-backend/internal/scheduler"
 	"stock-forecast-backend/internal/stockdata"
 
@@ -52,6 +53,15 @@ func init() {
 }
 
 func main() {
+	// 加载节假日配置
+	holidayFile := os.Getenv("HOLIDAY_FILE")
+	if holidayFile == "" {
+		holidayFile = "holidays.json"
+	}
+	if err := holiday.LoadCustomHolidays(holidayFile); err != nil {
+		log.Printf("警告: 加载节假日配置失败: %v，将使用API判断", err)
+	}
+
 	// 初始化Redis
 	if err := cache.InitRedis(); err != nil {
 		log.Printf("警告: %v，将使用内存缓存", err)
