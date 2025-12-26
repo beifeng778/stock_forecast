@@ -1176,13 +1176,13 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 	for _, s := range signals {
 		switch s.Name {
 		case "MACD", "RSI", "KDJ", "均线":
-			technicalSignals = append(technicalSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
+			technicalSignals = append(technicalSignals, fmt.Sprintf("%s: %s", s.Name, s.Desc))
 		case "成交量", "量价":
-			volumeSignals = append(volumeSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
-		case "市场", "波动", "突破", "动量", "情绪", "主力成本", "筹码":
-			marketSignals = append(marketSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
+			volumeSignals = append(volumeSignals, fmt.Sprintf("%s: %s", s.Name, s.Desc))
+		case "市场", "波动", "突破", "动量", "情绪", "主力成本", "筹码", "换手率":
+			marketSignals = append(marketSignals, fmt.Sprintf("%s: %s", s.Name, s.Desc))
 		case "大盘", "相对强度", "Beta":
-			indexSignals = append(indexSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
+			indexSignals = append(indexSignals, fmt.Sprintf("%s: %s", s.Name, s.Desc))
 		}
 	}
 
@@ -1250,15 +1250,15 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 
 **技术面强弱**：结合均线排列、MACD金叉死叉、RSI超买超卖状态
 
-**成交量配合**：分析量价关系，是否存在背离信号
+**成交量配合**：分析量价关系、换手率水平、资金流向，是否存在背离信号
 
-**市场环境影响**：当前市场趋势对个股的影响%s
+**市场环境影响**：分析大盘走势、个股相对强度、市场情绪、主力成本%s
 
 **风险提示**：关键支撑阻力位，止损建议
 
 **操作策略**：具体的买卖时机和仓位建议
 
-请使用markdown格式，控制在350字以内，重点突出关键信息。`,
+请使用markdown格式，控制在400字以内，重点突出关键信息。`,
 		name, code,
 		// 基础技术指标
 		indicators.MA5, indicators.MA10, indicators.MA20, indicators.MA60,

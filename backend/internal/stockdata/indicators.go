@@ -198,7 +198,6 @@ func CalculateIndicators(data []KlineData) (*Indicators, error) {
 
 	// 计算换手率指标
 	ind.CurrentTurnover, ind.AvgTurnover5D, ind.AvgTurnover20D, ind.TurnoverRatio, ind.TurnoverLevel = calculateTurnoverIndicators(data)
-	log.Printf("[DEBUG][换手率] 当前换手率: %.2f%%, 5日均: %.2f%%, 水平: %s", ind.CurrentTurnover, ind.AvgTurnover5D, ind.TurnoverLevel)
 
 	// 生成信号
 	ind.Signals = generateSignals(ind)
@@ -573,7 +572,6 @@ func generateSignals(ind *Indicators) []Signal {
 	}
 
 	// 大盘影响信号
-	log.Printf("[DEBUG][signals] IndexCode=%s, IndexChange=%.2f, IndexTrend=%s", ind.IndexCode, ind.IndexChange, ind.IndexTrend)
 	if ind.IndexCode != "" {
 		// 大盘趋势信号
 		switch ind.IndexTrend {
@@ -1324,7 +1322,6 @@ func CalculateIndicatorsWithIndex(stockCode string, data []KlineData) (*Indicato
 
 	// 计算大盘影响指标
 	calculateIndexInfluence(ind, data, indexKline.Data, indexKline.Code)
-	log.Printf("大盘影响计算完成 (股票: %s, 指数: %s, 涨跌: %.2f%%)", stockCode, ind.IndexCode, ind.IndexChange)
 
 	// 重新生成信号（包含大盘影响信号）
 	ind.Signals = generateSignals(ind)
