@@ -20,16 +20,14 @@ type PredictResult struct {
 	StockName        string              `json:"stock_name"`
 	Sector           string              `json:"sector"`   // 板块
 	Industry         string              `json:"industry"` // 主营业务行业
-	IsIntraday       bool                `json:"is_intraday"`
+	IsIntraday       bool                `json:"is_intraday"` // 已废弃，保留字段用于兼容性
 	CurrentPrice     float64             `json:"current_price"`
 	Trend            string              `json:"trend"`         // up, down, sideways
 	TrendCN          string              `json:"trend_cn"`      // 看涨, 看跌, 震荡
 	Confidence       float64             `json:"confidence"`    // 0-100
 	PriceRange       PriceRange          `json:"price_range"`   // 预测价格区间
 	TargetPrices     TargetPrices        `json:"target_prices"` // 目标价位
-	FutureKlines     []KlineData         `json:"future_klines,omitempty"`
-	AIToday          *KlineData          `json:"ai_today,omitempty"`
-	NeedPredictToday bool                `json:"need_predict_today,omitempty"`
+	FutureKlines     []KlineData         `json:"future_klines,omitempty"` // 包含今天的5天预测
 	SupportLevel     float64             `json:"support_level"`    // 支撑位
 	ResistanceLevel  float64             `json:"resistance_level"` // 压力位
 	Indicators       TechnicalIndicators `json:"indicators"`       // 技术指标

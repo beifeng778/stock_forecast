@@ -360,9 +360,6 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		return nil, fmt.Errorf("获取技术指标失败: 返回数据为空")
 	}
 
-	isIntradayCard := isTradingTimeNow() && !todayKlineComplete
-	needPredictToday := isTradingDayNow() && !todayKlineComplete
-
 	var indicatorsForTodayPred *stockdata.Indicators
 	if hasTodayData && len(kline.Data) >= 2 {
 		indicatorsForTodayPred, _ = stockdata.CalculateIndicatorsWithIndex(code, kline.Data[:len(kline.Data)-1])
@@ -403,7 +400,7 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		}
 		newsAnalysis = generateNewsAnalysis(newsImpact, news)
 	}
-	if needPredictToday && isTradingTimeNow() {
+	if !todayKlineComplete && isTradingTimeNow() {
 		analysis = "盘中（当日K线未就绪，分析仅使用历史完整日K）：\n\n" + analysis
 	} else if hasTodayData && !todayKlineComplete {
 		analysis = "当日K线数据不完整（分析仅使用历史完整日K）：\n\n" + analysis
@@ -415,46 +412,49 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 	// 10. 获取近期每日涨跌幅（同样只用完整日K）
 	dailyChanges := getDailyChangesFromKline(klineForAnalysis, 10)
 
-	confidenceForTodayPred := confidence
-	targetPricesForTodayPred := targetPrices
-	volatilityForTodayPred := indicators.Volatility
-	supportForTodayPred := indicators.SupportLevel
-	resistanceForTodayPred := indicators.ResistanceLevel
-	if indicatorsForTodayPred != nil {
-		signalsForTodayPred = convertSignals(indicatorsForTodayPred.Signals)
-		mlPredForTodayPred := generateMLPredictions(indicatorsForTodayPred)
-		trendForTodayPred, _, confForTodayPred := determineTrendWithNews(mlPredForTodayPred, signalsForTodayPred, newsImpact)
-		confidenceForTodayPred = confForTodayPred
-		targetPricesForTodayPred = calculateTargetPricesWithNews(indicatorsForTodayPred.CurrentPrice, trendForTodayPred, confidenceForTodayPred, newsImpact)
-		volatilityForTodayPred = indicatorsForTodayPred.Volatility
-		supportForTodayPred = indicatorsForTodayPred.SupportLevel
-		resistanceForTodayPred = indicatorsForTodayPred.ResistanceLevel
+	// 生成未来5天预测（包含今天）
+	// 修复：当今天已收盘时，futureKlines 应该基于昨天为止的数据生成，确保预测链条的一致性
+	// 预测链条：昨天实际 → 今天预测 → 明天预测 → ...
+	// 而不是：今天实际 → 明天预测 → ...
+	historyForFuture := kline.Data
+	targetForFuture := targetPrices.Short
+	supportForFuture := indicators.SupportLevel
+	resistanceForFuture := indicators.ResistanceLevel
+	confidenceForFuture := confidence
+	volatilityForFuture := indicators.Volatility
+	if hasTodayData && !todayKlineComplete {
+		// 今天已收盘，去掉今天的实际数据，基于昨天预测
+		log.Printf("[DEBUG][%s] 今天已收盘，使用昨天为止的数据生成预测链条", code)
+		historyForFuture = kline.Data[:len(kline.Data)-1]
+		// 使用基于昨天数据的指标计算目标价
+		if indicatorsForTodayPred != nil {
+			signalsForTodayPred = convertSignals(indicatorsForTodayPred.Signals)
+			mlPredForTodayPred := generateMLPredictions(indicatorsForTodayPred)
+			trendForTodayPred, _, confForTodayPred := determineTrendWithNews(mlPredForTodayPred, signalsForTodayPred, newsImpact)
+			targetForFuture = calculateTargetPricesWithNews(indicatorsForTodayPred.CurrentPrice, trendForTodayPred, confForTodayPred, newsImpact).Short
+			supportForFuture = indicatorsForTodayPred.SupportLevel
+			resistanceForFuture = indicatorsForTodayPred.ResistanceLevel
+			confidenceForFuture = confForTodayPred
+			volatilityForFuture = indicatorsForTodayPred.Volatility
+		}
+	} else {
+		log.Printf("[DEBUG][%s] hasTodayData=%v, todayKlineComplete=%v, 使用包含今天的数据生成预测", code, hasTodayData, todayKlineComplete)
 	}
+	futureKlines := generateFutureKlines(code, stockName, historyForFuture, true, targetForFuture, supportForFuture, resistanceForFuture, confidenceForFuture, volatilityForFuture)
 
-	var aiToday *model.KlineData
-	if needPredictToday {
-		aiToday = generateTodayKline(code, stockName, kline.Data, targetPricesForTodayPred.Short, supportForTodayPred, resistanceForTodayPred, confidenceForTodayPred, volatilityForTodayPred)
-	} else if hasTodayData {
-		aiToday = generateTodayKline(code, stockName, kline.Data, targetPricesForTodayPred.Short, supportForTodayPred, resistanceForTodayPred, confidenceForTodayPred, volatilityForTodayPred)
-	}
-
-	// 统一设计：三种场景（盘前/盘中/盘后）都预测今天
-	// - aiToday: 今天的预测（用于卡片显示和对比）
-	// - future_klines: 包含今天的5天预测（今天,明天,后天,第4天,第5天）
-	// 总共5个预测节点
-	futureKlines := generateFutureKlines(code, stockName, kline.Data, true, targetPrices.Short, indicators.SupportLevel, indicators.ResistanceLevel, confidence, indicators.Volatility)
-
-	// 11. 使用LLM生成结构化OHLCV预测（ai_today + future_klines），失败则回退本地预测
+	// 11. 使用LLM生成结构化OHLCV预测（future_klines），失败则回退本地预测
 	if isBatch {
 		llmIndicators := techIndicators
 		llmSignals := signals
-		if indicatorsForTodayPred != nil && (!todayKlineComplete || needPredictToday) {
+		if indicatorsForTodayPred != nil && (!todayKlineComplete) {
 			llmIndicators = convertIndicators(indicatorsForTodayPred)
 			llmSignals = signalsForTodayPred
 		}
 
 		llmHistorySrc := kline.Data
-		if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr && !todayKlineComplete {
+		// 修复：当今天已收盘时，也应该去掉今天的实际数据，确保预测链条的一致性
+		// 预测链条：昨天实际 → 今天预测 → 明天预测 → ...
+		if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr && (hasTodayData && !todayKlineComplete) {
 			llmHistorySrc = llmHistorySrc[:len(llmHistorySrc)-1]
 		}
 		llmHistory := make([]model.KlineData, 0, len(llmHistorySrc))
@@ -471,12 +471,12 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		}
 
 		hasTodayActual := todayKlineComplete
-		llmAiToday, llmFutureKlines, llmErr := langchain.PredictOHLCVWithOptions(
+		llmFutureKlines, llmErr := langchain.PredictOHLCVWithOptions(
 			code,
 			stockName,
 			todayStr,
 			hasTodayActual,
-			needPredictToday,
+			false, // needPredictToday 已废弃，统一预测包含今天的5天
 			llmIndicators,
 			llmSignals,
 			nil,
@@ -488,7 +488,6 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 			if len(llmHistory) > 0 {
 				prevCloseForLLM = llmHistory[len(llmHistory)-1].Close
 			}
-			llmAiToday = sanitizeLLMToday(code, stockName, prevCloseForLLM, llmAiToday)
 			llmFutureKlines = sanitizeLLMKlines(code, stockName, prevCloseForLLM, llmFutureKlines)
 
 			// 强制修正LLM返回的日期，使用本地生成的正确日期
@@ -499,20 +498,19 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 				}
 			}
 
-			if llmAiToday != nil {
-				aiToday = llmAiToday
-			}
 			futureKlines = llmFutureKlines
 			if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
 				llmTargetPrice := llmFutureKlines[len(llmFutureKlines)-1].Close
 				targetPrices.Short = llmTargetPrice
 
 				// 根据LLM目标价调整趋势判断，确保一致性
+				// 动态阈值：基于波动率，最小0.5%，最大3%
+				threshold := math.Max(0.005, math.Min(0.03, indicators.Volatility*0.5))
 				priceChange := (llmTargetPrice - indicators.CurrentPrice) / indicators.CurrentPrice
-				if priceChange > 0.01 { // 涨幅超过1%
+				if priceChange > threshold {
 					trend = "up"
 					trendCN = "看涨"
-				} else if priceChange < -0.01 { // 跌幅超过1%
+				} else if priceChange < -threshold {
 					trend = "down"
 					trendCN = "看跌"
 				} else {
@@ -526,13 +524,15 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 	} else {
 		llmIndicators := techIndicators
 		llmSignals := signals
-		if indicatorsForTodayPred != nil && (!todayKlineComplete || needPredictToday) {
+		if indicatorsForTodayPred != nil && !todayKlineComplete {
 			llmIndicators = convertIndicators(indicatorsForTodayPred)
 			llmSignals = signalsForTodayPred
 		}
 
 		llmHistorySrc := kline.Data
-		if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr && !todayKlineComplete {
+		// 修复：当今天已收盘时，也应该去掉今天的实际数据，确保预测链条的一致性
+		// 预测链条：昨天实际 → 今天预测 → 明天预测 → ...
+		if len(llmHistorySrc) > 0 && llmHistorySrc[len(llmHistorySrc)-1].Date == todayStr && (hasTodayData && !todayKlineComplete) {
 			llmHistorySrc = llmHistorySrc[:len(llmHistorySrc)-1]
 		}
 		llmHistory := make([]model.KlineData, 0, len(llmHistorySrc))
@@ -549,13 +549,12 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		}
 
 		hasTodayActual := todayKlineComplete
-		llmAiToday, llmFutureKlines, llmErr := langchain.PredictOHLCV(code, stockName, todayStr, hasTodayActual, needPredictToday, llmIndicators, llmSignals, news, llmHistory)
+		llmFutureKlines, llmErr := langchain.PredictOHLCV(code, stockName, todayStr, hasTodayActual, false, llmIndicators, llmSignals, news, llmHistory)
 		if llmErr == nil && len(llmFutureKlines) > 0 {
 			prevCloseForLLM := 0.0
 			if len(llmHistory) > 0 {
 				prevCloseForLLM = llmHistory[len(llmHistory)-1].Close
 			}
-			llmAiToday = sanitizeLLMToday(code, stockName, prevCloseForLLM, llmAiToday)
 			llmFutureKlines = sanitizeLLMKlines(code, stockName, prevCloseForLLM, llmFutureKlines)
 
 			// 强制修正LLM返回的日期，使用本地生成的正确日期
@@ -566,20 +565,19 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 				}
 			}
 
-			if llmAiToday != nil {
-				aiToday = llmAiToday
-			}
 			futureKlines = llmFutureKlines
 			if llmFutureKlines[len(llmFutureKlines)-1].Close > 0 {
 				llmTargetPrice := llmFutureKlines[len(llmFutureKlines)-1].Close
 				targetPrices.Short = llmTargetPrice
 
 				// 根据LLM目标价调整趋势判断，确保一致性
+				// 动态阈值：基于波动率，最小0.5%，最大3%
+				threshold := math.Max(0.005, math.Min(0.03, indicators.Volatility*0.5))
 				priceChange := (llmTargetPrice - indicators.CurrentPrice) / indicators.CurrentPrice
-				if priceChange > 0.01 { // 涨幅超过1%
+				if priceChange > threshold {
 					trend = "up"
 					trendCN = "看涨"
-				} else if priceChange < -0.01 { // 跌幅超过1%
+				} else if priceChange < -threshold {
 					trend = "down"
 					trendCN = "看跌"
 				} else {
@@ -589,6 +587,26 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 			}
 		} else if llmErr != nil {
 			log.Printf("[ERROR][LLM] PredictOHLCV失败(%s): %v", code, llmErr)
+			// LLM失败时，使用本地生成的K线调整趋势判断，确保一致性
+			if len(futureKlines) > 0 && futureKlines[len(futureKlines)-1].Close > 0 {
+				localTargetPrice := futureKlines[len(futureKlines)-1].Close
+				targetPrices.Short = localTargetPrice
+
+				// 根据本地K线的第5日收盘价调整趋势判断
+				// 动态阈值：基于波动率，最小0.5%，最大3%
+				threshold := math.Max(0.005, math.Min(0.03, indicators.Volatility*0.5))
+				priceChange := (localTargetPrice - indicators.CurrentPrice) / indicators.CurrentPrice
+				if priceChange > threshold {
+					trend = "up"
+					trendCN = "看涨"
+				} else if priceChange < -threshold {
+					trend = "down"
+					trendCN = "看跌"
+				} else {
+					trend = "sideways"
+					trendCN = "震荡"
+				}
+			}
 		}
 	}
 
@@ -597,7 +615,7 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		StockName:    stockName,
 		Sector:       sector,
 		Industry:     industry,
-		IsIntraday:   isIntradayCard,
+		IsIntraday:   false, // 已废弃，统一使用 future_klines
 		CurrentPrice: indicators.CurrentPrice,
 		Trend:        trend,
 		TrendCN:      trendCN,
@@ -608,8 +626,6 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		},
 		TargetPrices:     targetPrices,
 		FutureKlines:     futureKlines,
-		AIToday:          aiToday,
-		NeedPredictToday: needPredictToday,
 		SupportLevel:     indicators.SupportLevel,
 		ResistanceLevel:  indicators.ResistanceLevel,
 		Indicators:       techIndicators,
@@ -619,114 +635,6 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		MLPredictions:    mlPredictions,
 		DailyChanges:     dailyChanges,
 	}, nil
-}
-
-func generateTodayKline(stockCode, stockName string, history []stockdata.KlineData, targetPrice float64, supportLevel float64, resistanceLevel float64, confidence float64, volatility float64) *model.KlineData {
-	if len(history) < 1 {
-		return nil
-	}
-
-	now := time.Now()
-	todayStr := now.Format("2006-01-02")
-	last := history[len(history)-1]
-	if last.Date == todayStr && len(history) < 2 {
-		return nil
-	}
-
-	todayDate, err1 := time.Parse("2006-01-02", todayStr)
-	lastDate, err2 := time.Parse("2006-01-02", last.Date)
-	if err1 != nil || err2 != nil {
-		return nil
-	}
-	if lastDate.After(todayDate) {
-		return nil
-	}
-	if todayDate.Sub(lastDate) > 7*24*time.Hour {
-		return nil
-	}
-
-	prevDay := last
-	anchorClose := last.Close
-	if last.Date == todayStr {
-		prevDay = history[len(history)-2]
-		anchorClose = prevDay.Close
-	}
-	if anchorClose <= 0 {
-		return nil
-	}
-
-	steps := 5
-	drift := 0.0
-	if targetPrice > 0 {
-		drift = (targetPrice/anchorClose - 1) / float64(steps)
-	}
-
-	baseVol := volatility
-	if baseVol <= 0 {
-		baseVol = 0.03
-	}
-	dailyStd := baseVol * (1.2 - confidence*0.4)
-	if dailyStd < 0.01 {
-		dailyStd = 0.01
-	}
-
-	_ = supportLevel
-	_ = resistanceLevel
-
-	simulations := 50
-	baseSeed := seedFromString(stockCode + "|" + todayStr + "|today")
-
-	sumOpen := 0.0
-	sumClose := 0.0
-	sumHigh := 0.0
-	sumLow := 0.0
-	limit := getDailyPriceLimitPercent(stockCode, stockName)
-	for i := 0; i < simulations; i++ {
-		rng := rand.New(rand.NewSource(baseSeed + int64(i)*10007))
-
-		open := anchorClose
-		ret := drift + rng.NormFloat64()*dailyStd*0.5
-		close := anchorClose * (1 + ret)
-		if close <= 0 {
-			close = anchorClose
-		}
-
-		rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.8
-		high := math.Max(open, close) * (1 + rangeFactor)
-		low := math.Min(open, close) * (1 - rangeFactor)
-		if low <= 0 {
-			low = math.Min(open, close)
-		}
-
-		clampKlineToLimit(anchorClose, limit, &open, &high, &low, &close)
-
-		sumOpen += open
-		sumClose += close
-		sumHigh += high
-		sumLow += low
-	}
-
-	open := sumOpen / float64(simulations)
-	close := sumClose / float64(simulations)
-	high := sumHigh / float64(simulations)
-	low := sumLow / float64(simulations)
-
-	high = math.Max(high, math.Max(open, close))
-	low = math.Min(low, math.Min(open, close))
-	clampKlineToLimit(anchorClose, limit, &open, &high, &low, &close)
-
-	volume := prevDay.Volume
-	amount := prevDay.Amount
-
-	return &model.KlineData{
-		Date:   todayStr,
-		Open:   round4(open),
-		Close:  round4(close),
-		High:   round4(high),
-		Low:    round4(low),
-		Volume: volume,
-		Amount: amount,
-	}
 }
 
 func getDailyChangesFromKline(data []stockdata.KlineData, days int) []model.DailyChange {
@@ -837,15 +745,24 @@ func generateFutureKlines(stockCode, stockName string, history []stockdata.Kline
 	result := make([]model.KlineData, 0, steps)
 	prevClose := anchorClose
 	for d := 0; d < steps; d++ {
+		// 修复：使用prevClose作为基准，而不是anchorClose
+		// 这样每个预测节点都基于前一个预测节点，形成连贯的预测链条
 		t := float64(d+1) / float64(steps)
 		expectedClose := anchorClose + (target-anchorClose)*t
 		if expectedClose <= 0 {
 			expectedClose = prevClose
 		}
 
+		// 计算相对于prevClose的涨跌幅
+		changeFromPrev := (expectedClose - prevClose) / prevClose
+
 		gap := rng.NormFloat64() * dailyStd * 0.08
 		open := prevClose * (1 + gap)
-		close := expectedClose
+		// 基于prevClose和预期涨跌幅计算close
+		close := prevClose * (1 + changeFromPrev + rng.NormFloat64()*dailyStd*0.3)
+		if close <= 0 {
+			close = expectedClose
+		}
 
 		rangeFactor := math.Abs(rng.NormFloat64()) * dailyStd * 0.6
 		high := math.Max(open, close) * (1 + rangeFactor)

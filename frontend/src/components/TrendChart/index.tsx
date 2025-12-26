@@ -189,8 +189,6 @@ const TrendChart: React.FC = () => {
     return {
       dates,
       klines: prediction.future_klines,
-      needPredictToday: !!prediction.need_predict_today,
-      aiToday: prediction.ai_today || null,
     };
   }, [currentStock, predictions]);
 
@@ -276,17 +274,8 @@ const TrendChart: React.FC = () => {
         for (let i = 0; i < klineData.length - 1; i++) {
           predictionPrices.push(null);
         }
-        // 如果有aiToday，优先使用aiToday作为今天的预测值
-        if (predictionData.aiToday) {
-          predictionPrices.push(predictionData.aiToday.close);
-          // 使用klines[1-4]作为未来4天的预测值
-          for (let i = 1; i < predictionData.klines.length; i++) {
-            predictionPrices.push(predictionData.klines[i].close);
-          }
-        } else {
-          // 没有aiToday，使用所有5个预测数据
-          predictionData.klines.forEach((k) => predictionPrices.push(k.close));
-        }
+        // 使用所有预测数据
+        predictionData.klines.forEach((k) => predictionPrices.push(k.close));
       } else if (hasTodayData && !predFirstDateIsToday) {
         // 情况2：历史K线包含今天，但预测第一个不是今天
         // X轴没有跳过，预测线从历史K线的最后一个位置开始
@@ -454,12 +443,10 @@ const TrendChart: React.FC = () => {
             const showActualAll =
               isToday && isTradingDay() && isMarketClosed() && hasTodayActual;
 
+            // 统一使用 future_klines[0] 作为今天的预测
             const predToday =
-              isToday && predictionData?.aiToday
-                ? predictionData.aiToday
-                : isToday &&
-                  predictionData?.needPredictToday &&
-                  predictionData.klines?.[0]?.date === today
+              isToday &&
+              predictionData?.klines?.[0]?.date === today
                 ? predictionData.klines[0]
                 : null;
 
@@ -693,6 +680,7 @@ const TrendChart: React.FC = () => {
 
             const predKline = predictionData?.klines[predIdx];
             if (!predKline) return "";
+
             const pred = predictions.find((p) => p.stock_code === currentStock);
             // 使用本地时间而不是UTC时间
             const now2 = new Date();
@@ -706,11 +694,23 @@ const TrendChart: React.FC = () => {
             let changePercent = 0;
             let prevClose = 0;
             if (predIdx === 0 && klineData.length > 0) {
-              // 第一个预测点，用最后一个历史数据的收盘价
-              prevClose = klineData[klineData.length - 1].close;
+              // 第一个预测点的基准价
+              // 如果今天已收盘（历史K线包含今天），应该基于昨天的实际值
+              const lastHistoryDate = klineData[klineData.length - 1]?.date;
+              const hasTodayInHistory = lastHistoryDate === today;
+
+              if (hasTodayInHistory && klineData.length >= 2) {
+                // 今天已收盘，基于昨天的实际收盘价
+                prevClose = klineData[klineData.length - 2].close;
+              } else {
+                // 今天未收盘或盘前，基于最后一个历史数据的收盘价
+                prevClose = klineData[klineData.length - 1].close;
+              }
             } else if (predIdx > 0 && predictionData?.klines[predIdx - 1]) {
+              // 后续预测点，基于前一个预测点的收盘价
               prevClose = predictionData.klines[predIdx - 1].close;
             }
+
             if (prevClose > 0) {
               changePercent = ((predKline.close - prevClose) / prevClose) * 100;
             }

@@ -165,7 +165,6 @@ func ResolveLLMSamplesPath(p string) string {
 }
 
 type ohlcvLLMResponse struct {
-	AIToday      *model.KlineData  `json:"ai_today"`
 	FutureKlines []model.KlineData `json:"future_klines"`
 	Confidence   float64           `json:"confidence"`
 	Reasons      []string          `json:"reasons"`
@@ -584,7 +583,7 @@ func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday
 	}
 
 	sb.WriteString("\n【输出JSON格式】\n")
-	sb.WriteString("{\"ai_today\":{...}|null,\"future_klines\":[{...}],\"confidence\":0-100,\"reasons\":[...]}\n")
+	sb.WriteString("{\"future_klines\":[{...}],\"confidence\":0-100,\"reasons\":[...]}\n")
 
 	return sb.String()
 }
@@ -752,11 +751,11 @@ func historyVolAmtSummary(history []model.KlineData, lastN int) string {
 	return amtText
 }
 
-func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData) (*model.KlineData, []model.KlineData, error) {
+func PredictOHLCV(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData) ([]model.KlineData, error) {
 	return PredictOHLCVWithOptions(code, name, today, hasTodayActual, needPredictToday, indicators, signals, news, history, OHLCVOptions{AllowRetry: true, Timeout: 35 * time.Second, RetryTimeout: 20 * time.Second})
 }
 
-func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData, opts OHLCVOptions) (*model.KlineData, []model.KlineData, error) {
+func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredictToday bool, indicators model.TechnicalIndicators, signals []model.Signal, news []NewsItem, history []model.KlineData, opts OHLCVOptions) ([]model.KlineData, error) {
 	ensureLLMConfig()
 	if opts.Timeout <= 0 {
 		opts.Timeout = 35 * time.Second
@@ -896,7 +895,7 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 				log.Printf("[DEBUG][LLM][ohlcv_cache] hit=day code=%s today=%s", code, today)
 			}
 			if len(out.FutureKlines) == 0 {
-				return out.AIToday, nil, fmt.Errorf("LLM返回future_klines为空")
+				return nil, fmt.Errorf("LLM返回future_klines为空")
 			}
 			if msg, ok := validate(out); !ok {
 				if llmDebugSamples {
@@ -907,7 +906,7 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 				ohlcvCacheMu.Unlock()
 				// 继续往下走，重新请求 LLM 并覆盖缓存
 			} else {
-				return out.AIToday, out.FutureKlines, nil
+				return out.FutureKlines, nil
 			}
 		} else {
 			ohlcvCacheMu.Unlock()
@@ -930,7 +929,7 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 				log.Printf("[DEBUG][LLM][ohlcv_cache] hit=prompt code=%s today=%s", code, today)
 			}
 			if len(out.FutureKlines) == 0 {
-				return out.AIToday, nil, fmt.Errorf("LLM返回future_klines为空")
+				return nil, fmt.Errorf("LLM返回future_klines为空")
 			}
 			if msg, ok := validate(out); !ok {
 				if llmDebugSamples {
@@ -941,7 +940,7 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 				ohlcvCacheMu.Unlock()
 				// 继续往下走，重新请求 LLM 并覆盖缓存
 			} else {
-				return out.AIToday, out.FutureKlines, nil
+				return out.FutureKlines, nil
 			}
 		} else {
 			ohlcvCacheMu.Unlock()
@@ -962,12 +961,12 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 		},
 	}, opts.Timeout)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	out, err := parseOut(result)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	cacheable := true
 	if msg, ok := validate(out); !ok {
@@ -989,7 +988,7 @@ func PredictOHLCVWithOptions(code, name, today string, hasTodayActual, needPredi
 			ohlcvCacheMu.Unlock()
 		}
 	}
-	return out.AIToday, out.FutureKlines, nil
+	return out.FutureKlines, nil
 }
 
 // Message 消息

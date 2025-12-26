@@ -105,8 +105,6 @@ export interface PredictResult {
   price_range: PriceRange;
   target_prices: TargetPrices;
   future_klines?: KlineData[];
-  ai_today?: KlineData;
-  need_predict_today?: boolean;
   support_level: number;
   resistance_level: number;
   indicators: TechnicalIndicators;
