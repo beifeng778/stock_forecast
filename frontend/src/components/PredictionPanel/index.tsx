@@ -366,13 +366,16 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                     <h4>目标价位</h4>
                     <div className="target-grid">
                       <div>
-                        短期(5日): {result.target_prices.short.toFixed(2)}
+                        <span className="target-label">短期(5日):</span>
+                        <span className="target-value">{result.target_prices.short.toFixed(2)}</span>
                       </div>
                       <div>
-                        中期(20日): {result.target_prices.medium.toFixed(2)}
+                        <span className="target-label">中期(20日):</span>
+                        <span className="target-value">{result.target_prices.medium.toFixed(2)}</span>
                       </div>
                       <div>
-                        长期(60日): {result.target_prices.long.toFixed(2)}
+                        <span className="target-label">长期(60日):</span>
+                        <span className="target-value">{result.target_prices.long.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>

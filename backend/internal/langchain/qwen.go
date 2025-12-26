@@ -443,7 +443,56 @@ func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday
 	sb.WriteString("2) 输出字段必须齐全：date/open/high/low/close/volume/amount。\n")
 	sb.WriteString("3) future_klines 必须为5条交易日记录，date 字段必须严格使用【未来交易日】中给出的日期。\n")
 	sb.WriteString("4) 预测路径必须合理，避免出现极端连板/连续暴涨暴跌式的路径；除非信号与新闻非常强烈且你能在 reasons 中清晰解释。\n")
-	sb.WriteString("5) 预测的成交量/成交额必须与历史数据量级一致，不允许出现 0 或异常夸张的数量级。\n")
+	sb.WriteString("5) 预测的成交量/成交额必须与���史数据量级一致，不允许出现 0 或异常夸张的数量级。\n")
+
+	// 添加技术分析约束
+	sb.WriteString("\n【技术分析约束】\n")
+	sb.WriteString("请在生成K线预测时，遵守以下技术分析约束，确保预测的合理性：\n")
+
+	// 1. 支撑位/压力位约束（基于布林带）
+	if indicators.BOLL_L > 0 && indicators.BOLL_U > 0 {
+		sb.WriteString(fmt.Sprintf("• 支撑位参考：%.2f（布林带下轨），建议K线的low不要轻易跌破此价位\n", indicators.BOLL_L))
+		sb.WriteString(fmt.Sprintf("• 压力位参考：%.2f（布林带上轨），建议K线的high不要轻易突破此价位\n", indicators.BOLL_U))
+		sb.WriteString(fmt.Sprintf("• 合理波动区间：[%.2f, %.2f]，预测的close应优先在此区间内\n", indicators.BOLL_L, indicators.BOLL_U))
+	}
+
+	// 2. 趋势一致性约束
+	trendDesc := "震荡"
+	if indicators.MarketTrend == "bull" {
+		trendDesc = "上涨"
+	} else if indicators.MarketTrend == "bear" {
+		trendDesc = "下跌"
+	}
+	sb.WriteString(fmt.Sprintf("• 基础趋势判断：%s（趋势强度：%.2f），预测路径应与此趋势基本一致\n", trendDesc, indicators.TrendStrength))
+
+	// 3. 均线系统约束
+	sb.WriteString(fmt.Sprintf("• 均线系统：MA5=%.2f, MA20=%.2f, MA60=%.2f\n", indicators.MA5, indicators.MA20, indicators.MA60))
+	if indicators.MA5 > indicators.MA20 && indicators.MA20 > indicators.MA60 {
+		sb.WriteString("  - 当前多头排列，建议预测偏向看涨，close应逐步向上或维持高位\n")
+	} else if indicators.MA5 < indicators.MA20 && indicators.MA20 < indicators.MA60 {
+		sb.WriteString("  - 当前空头排列，建议预测偏向看跌，close应逐步向下或维持低位\n")
+	} else {
+		sb.WriteString("  - 当前均线纠缠，建议预测偏向震荡，close应在均线附近波动\n")
+	}
+
+	// 4. 涨跌停限制（A股±10%）
+	if len(history) > 0 {
+		lastClose := history[len(history)-1].Close
+		maxLimit := lastClose * 1.10
+		minLimit := lastClose * 0.90
+		sb.WriteString(fmt.Sprintf("• 涨跌停限制：基于最后收盘价%.2f，单日涨停价%.2f，跌停价%.2f\n", lastClose, maxLimit, minLimit))
+		sb.WriteString("  - 预测的K线必须遵守A股涨跌停限制（±10%），除非有特殊情况（如ST股票）\n")
+	}
+
+	// 5. 波动率约束
+	sb.WriteString(fmt.Sprintf("• 波动率参考：%.2f%%，预测的日内波动幅度应与历史波动率相匹配\n", indicators.Volatility*100))
+	if indicators.Volatility < 0.02 {
+		sb.WriteString("  - 当前低波动，建议预测的high-low幅度较小（<3%）\n")
+	} else if indicators.Volatility > 0.05 {
+		sb.WriteString("  - 当前高波动，可以预测较大的high-low幅度（3-8%）\n")
+	}
+
+	sb.WriteString("\n说明：以上约束为软约束，若信号/新闻/趋势结构强烈支持突破，可以适度偏离，但必须在reasons中说明理由。\n")
 
 	sb.WriteString("\n【输入-技术指标】\n")
 	sb.WriteString(fmt.Sprintf("MA5=%.4f MA10=%.4f MA20=%.4f MA60=%.4f\n", indicators.MA5, indicators.MA10, indicators.MA20, indicators.MA60))

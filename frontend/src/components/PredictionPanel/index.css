@@ -339,15 +339,36 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
-  font-size: 12px;
+  font-size: 11px;
   color: #94a3b8;
 }
 
 .target-grid > div {
-  padding: 8px;
+  padding: 8px 4px;
   background: rgba(99, 102, 241, 0.1);
   border-radius: 6px;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.target-grid .target-label {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.target-grid .target-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ML预测表格样式 */
