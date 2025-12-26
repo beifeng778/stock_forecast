@@ -14,13 +14,14 @@ import (
 
 // KlineData K线数据
 type KlineData struct {
-	Date   string  `json:"date"`
-	Open   float64 `json:"open"`
-	Close  float64 `json:"close"`
-	High   float64 `json:"high"`
-	Low    float64 `json:"low"`
-	Volume float64 `json:"volume"`
-	Amount float64 `json:"amount"`
+	Date     string  `json:"date"`
+	Open     float64 `json:"open"`
+	Close    float64 `json:"close"`
+	High     float64 `json:"high"`
+	Low      float64 `json:"low"`
+	Volume   float64 `json:"volume"`
+	Amount   float64 `json:"amount"`
+	Turnover float64 `json:"turnover"` // 换手率（%）
 }
 
 // KlineResponse K线响应
@@ -46,15 +47,31 @@ func getKlineCacheKey(code, period string) string {
 }
 
 func getKlineCacheTTL(period string) time.Duration {
-	// 日/周/月K默认短缓存，既降低第三方压力，也避免盘中数据过旧。
-	// 盘中需要实时可通过 refresh=1 强制刷新。
+	// 日K线缓存到第二天凌晨5点（定时任务刷新时间）
+	// 这样可以避免频繁请求第三方API，减少风控风险
 	switch period {
 	case "daily":
-		return 5 * time.Minute
+		// 计算到第二天凌晨5点的时间
+		now := time.Now()
+		tomorrow := now.AddDate(0, 0, 1)
+		nextRefresh := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 5, 0, 0, 0, now.Location())
+		ttl := nextRefresh.Sub(now)
+
+		// 如果已经过了今天的5点，则缓存到明天5点
+		if ttl < 0 {
+			ttl = nextRefresh.Add(24 * time.Hour).Sub(now)
+		}
+
+		// 最少缓存1小时，避免异常情况
+		if ttl < time.Hour {
+			ttl = time.Hour
+		}
+
+		return ttl
 	case "weekly", "monthly":
-		return 30 * time.Minute
+		return 24 * time.Hour // 周K和月K缓存24小时
 	default:
-		return 5 * time.Minute
+		return time.Hour
 	}
 }
 
@@ -88,8 +105,8 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 		}
 	}
 
-	// 先尝试新浪接口
-	data, err := getKlineFromSina(code, period)
+	// 优先尝试东方财富接口（提供换手率数据）
+	data, err := getKlineFromEM(code, period)
 	if err == nil && len(data) > 0 {
 		data = normalizeKlineData(data)
 		name, _ := GetStockName(code)
@@ -109,8 +126,8 @@ func GetKlineWithRefresh(code, period string, forceRefresh bool) (*KlineResponse
 		return resp, nil
 	}
 
-	// 新浪失败，尝试东方财富
-	data, err = getKlineFromEM(code, period)
+	// 东方财富失败，尝试新浪接口（备用，无换手率）
+	data, err = getKlineFromSina(code, period)
 	if err == nil && len(data) > 0 {
 		data = normalizeKlineData(data)
 		name, _ := GetStockName(code)
@@ -272,13 +289,14 @@ func getKlineFromSina(code, period string) ([]KlineData, error) {
 		volume, _ := strconv.ParseFloat(item.Volume, 64)
 
 		result = append(result, KlineData{
-			Date:   item.Day,
-			Open:   open,
-			Close:  close,
-			High:   high,
-			Low:    low,
-			Volume: volume,
-			Amount: 0,
+			Date:     item.Day,
+			Open:     open,
+			Close:    close,
+			High:     high,
+			Low:      low,
+			Volume:   volume,
+			Amount:   0,
+			Turnover: 0, // 新浪API不提供换手率
 		})
 	}
 
@@ -308,7 +326,7 @@ func getKlineFromEM(code, period string) ([]KlineData, error) {
 		klt = "101"
 	}
 
-	url := fmt.Sprintf("https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=%s&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57&klt=%s&fqt=1&end=20500101&lmt=250",
+	url := fmt.Sprintf("https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=%s&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f61&klt=%s&fqt=1&end=20500101&lmt=250",
 		secid, klt)
 
 	req, _ := http.NewRequest("GET", url, nil)
@@ -350,14 +368,21 @@ func getKlineFromEM(code, period string) ([]KlineData, error) {
 		volume, _ := strconv.ParseFloat(parts[5], 64)
 		amount, _ := strconv.ParseFloat(parts[6], 64)
 
+		// 解析换手率（f61字段，如果存在）
+		turnover := 0.0
+		if len(parts) >= 8 {
+			turnover, _ = strconv.ParseFloat(parts[7], 64)
+		}
+
 		result = append(result, KlineData{
-			Date:   parts[0],
-			Open:   open,
-			Close:  close,
-			High:   high,
-			Low:    low,
-			Volume: volume,
-			Amount: amount,
+			Date:     parts[0],
+			Open:     open,
+			Close:    close,
+			High:     high,
+			Low:      low,
+			Volume:   volume,
+			Amount:   amount,
+			Turnover: turnover,
 		})
 	}
 

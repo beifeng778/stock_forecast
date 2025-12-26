@@ -492,6 +492,31 @@ func buildOHLCVPrompt(code, name, today string, hasTodayActual, needPredictToday
 		sb.WriteString("  - 当前高波动，可以预测较大的high-low幅度（3-8%）\n")
 	}
 
+	// 6. 换手率约束（如果有换手率数据）
+	if indicators.CurrentTurnover > 0 {
+		sb.WriteString(fmt.Sprintf("• 换手率参考：当前%.2f%%，5日均值%.2f%%，20日均值%.2f%%\n",
+			indicators.CurrentTurnover, indicators.AvgTurnover5D, indicators.AvgTurnover20D))
+		sb.WriteString(fmt.Sprintf("  - 换手率水平：%s，换手率比率：%.2f（当前/5日均值）\n",
+			indicators.TurnoverLevel, indicators.TurnoverRatio))
+
+		// 根据换手率水平给出约束建议
+		if indicators.TurnoverLevel == "极高" || indicators.TurnoverLevel == "高" {
+			sb.WriteString("  - 当前高换手率，预测时应考虑资金活跃度高，可能出现较大波动\n")
+			if indicators.Change1D > 3 {
+				sb.WriteString("  - 放量上涨，资金积极介入，预测可偏向乐观，但需警惕高位出货风险\n")
+			} else if indicators.Change1D < -3 {
+				sb.WriteString("  - 放量下跌，资金流出明显，预测应偏向谨慎，可能继续调整\n")
+			}
+		} else if indicators.TurnoverLevel == "低" || indicators.TurnoverLevel == "极低" {
+			sb.WriteString("  - 当前低换手率，预测时应考虑交投清淡，波动可能较小\n")
+			if indicators.Change1D > 2 {
+				sb.WriteString("  - 缩量上涨，惜售情绪浓厚，预测可偏向看涨，但上涨空间可能有限\n")
+			} else if indicators.Change1D < -2 {
+				sb.WriteString("  - 缩量下跌，无量阴跌，预测应偏向谨慎，可能继续弱势\n")
+			}
+		}
+	}
+
 	sb.WriteString("\n说明：以上约束为软约束，若信号/新闻/趋势结构强烈支持突破，可以适度偏离，但必须在reasons中说明理由。\n")
 
 	sb.WriteString("\n【输入-技术指标】\n")

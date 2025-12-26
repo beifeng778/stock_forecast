@@ -30,7 +30,7 @@ const SignalTag: React.FC<{ signal: Signal }> = ({ signal }) => {
   };
   return (
     <Tag color={colorMap[signal.type]}>
-      {signal.name}: {signal.type_cn}
+      {signal.name}: {signal.desc}
     </Tag>
   );
 };
@@ -358,6 +358,29 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
                             {result.indicators.rsi.toFixed(2)}
                           </td>
                         </tr>
+                        {result.indicators.current_turnover !== undefined && result.indicators.current_turnover > 0 && (
+                          <>
+                            <tr>
+                              <td className="label">换手率</td>
+                              <td className="value">
+                                {result.indicators.current_turnover.toFixed(2)}%
+                                {result.indicators.turnover_level && (
+                                  <span style={{ marginLeft: '4px', fontSize: '11px', opacity: 0.8 }}>
+                                    ({result.indicators.turnover_level})
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                            {result.indicators.avg_turnover_5d !== undefined && result.indicators.avg_turnover_5d > 0 && (
+                              <tr>
+                                <td className="label">5日均换手</td>
+                                <td className="value">
+                                  {result.indicators.avg_turnover_5d.toFixed(2)}%
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        )}
                       </tbody>
                     </table>
                   </div>

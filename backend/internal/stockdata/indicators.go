@@ -72,6 +72,12 @@ type Indicators struct {
 	RelativeStrength   float64 `json:"relative_strength"`    // 相对大盘强度（个股涨幅-大盘涨幅）
 	Beta               float64 `json:"beta"`                 // Beta系数（个股与大盘的相关性）
 	FollowIndex        bool    `json:"follow_index"`         // 是否跟随大盘（Beta>0.8）
+	// 换手率指标
+	CurrentTurnover    float64 `json:"current_turnover"`     // 当前换手率（%）
+	AvgTurnover5D      float64 `json:"avg_turnover_5d"`      // 5日平均换手率（%）
+	AvgTurnover20D     float64 `json:"avg_turnover_20d"`     // 20日平均换手率（%）
+	TurnoverRatio      float64 `json:"turnover_ratio"`       // 换手率比率（当前/5日均值）
+	TurnoverLevel      string  `json:"turnover_level"`       // 换手率水平：low/normal/high/extreme
 }
 
 // Signal 信号
@@ -189,6 +195,10 @@ func CalculateIndicators(data []KlineData) (*Indicators, error) {
 	ind.CostDeviation60 = calculateCostDeviation(ind.CurrentPrice, ind.MainForceCost60)
 	ind.ChipConcentration = calculateChipConcentration(data)
 	ind.MainForceProfit = calculateCostDeviation(ind.CurrentPrice, ind.MainForceCost20)
+
+	// 计算换手率指标
+	ind.CurrentTurnover, ind.AvgTurnover5D, ind.AvgTurnover20D, ind.TurnoverRatio, ind.TurnoverLevel = calculateTurnoverIndicators(data)
+	log.Printf("[DEBUG][换手率] 当前换手率: %.2f%%, 5日均: %.2f%%, 水平: %s", ind.CurrentTurnover, ind.AvgTurnover5D, ind.TurnoverLevel)
 
 	// 生成信号
 	ind.Signals = generateSignals(ind)
@@ -597,6 +607,51 @@ func generateSignals(ind *Indicators) []Signal {
 			signals = append(signals, Signal{Name: "Beta", Type: "neutral", Desc: fmt.Sprintf("低波动(%.2f)", ind.Beta)})
 		} else {
 			signals = append(signals, Signal{Name: "Beta", Type: "neutral", Desc: fmt.Sprintf("跟随大盘(%.2f)", ind.Beta)})
+		}
+	}
+
+	// 换手率信号（仅当有换手率数据时）
+	if ind.CurrentTurnover > 0 {
+		// 根据换手率水平和比率生成信号
+		if ind.TurnoverLevel == "极高" {
+			// 极高换手率（>15%）
+			if ind.Change1D > 5 {
+				// 放量大涨，可能是主力拉升或出货
+				signals = append(signals, Signal{Name: "换手率", Type: "neutral", Desc: fmt.Sprintf("%.1f%%(极高) 警惕出货", ind.CurrentTurnover)})
+			} else if ind.Change1D < -5 {
+				// 放量大跌，可能是恐慌性抛售
+				signals = append(signals, Signal{Name: "换手率", Type: "bullish", Desc: fmt.Sprintf("%.1f%%(极高) 恐慌抛售", ind.CurrentTurnover)})
+			} else {
+				signals = append(signals, Signal{Name: "换手率", Type: "neutral", Desc: fmt.Sprintf("%.1f%%(极高) 观望", ind.CurrentTurnover)})
+			}
+		} else if ind.TurnoverLevel == "高" {
+			// 高换手率（7-15%）
+			if ind.Change1D > 3 {
+				// 放量上涨，资金积极介入
+				signals = append(signals, Signal{Name: "换手率", Type: "bullish", Desc: fmt.Sprintf("%.1f%%(高) 资金介入", ind.CurrentTurnover)})
+			} else if ind.Change1D < -3 {
+				// 放量下跌，可能是洗盘或出货
+				signals = append(signals, Signal{Name: "换手率", Type: "bearish", Desc: fmt.Sprintf("%.1f%%(高) 资金流出", ind.CurrentTurnover)})
+			} else {
+				signals = append(signals, Signal{Name: "换手率", Type: "neutral", Desc: fmt.Sprintf("%.1f%%(高) 换手充分", ind.CurrentTurnover)})
+			}
+		} else if ind.TurnoverLevel == "正常" {
+			// 正常换手率（3-7%）
+			signals = append(signals, Signal{Name: "换手率", Type: "neutral", Desc: fmt.Sprintf("%.1f%%(正常)", ind.CurrentTurnover)})
+		} else if ind.TurnoverLevel == "低" {
+			// 低换手率（1-3%）
+			if ind.Change1D > 2 {
+				// 缩量上涨，惜售
+				signals = append(signals, Signal{Name: "换手率", Type: "bullish", Desc: fmt.Sprintf("%.1f%%(低) 惜售", ind.CurrentTurnover)})
+			} else if ind.Change1D < -2 {
+				// 缩量下跌，无量阴跌
+				signals = append(signals, Signal{Name: "换手率", Type: "bearish", Desc: fmt.Sprintf("%.1f%%(低) 无量阴跌", ind.CurrentTurnover)})
+			} else {
+				signals = append(signals, Signal{Name: "换手率", Type: "neutral", Desc: fmt.Sprintf("%.1f%%(低)", ind.CurrentTurnover)})
+			}
+		} else if ind.TurnoverLevel == "极低" {
+			// 极低换手率（<1%）
+			signals = append(signals, Signal{Name: "换手率", Type: "neutral", Desc: fmt.Sprintf("%.1f%%(极低) 交投清淡", ind.CurrentTurnover)})
 		}
 	}
 
@@ -1374,4 +1429,115 @@ func calculateBeta(stockData []KlineData, indexData []KlineData) float64 {
 
 	beta := covariance / indexVariance
 	return beta
+}
+
+// calculateTurnoverIndicators 计算换手率指标
+// 返回：当前换手率、5日平均、20日平均、换手率比率、换手率水平
+func calculateTurnoverIndicators(data []KlineData) (current, avg5d, avg20d, ratio float64, level string) {
+	n := len(data)
+	if n == 0 {
+		return 0, 0, 0, 0, "unknown"
+	}
+
+	// 当前换手率
+	current = data[n-1].Turnover
+
+	// 如果换手率数据为0（新浪API不提供），返回默认值
+	if current == 0 {
+		// 检查是否所有数据都是0
+		hasData := false
+		for i := 0; i < n; i++ {
+			if data[i].Turnover > 0 {
+				hasData = true
+				break
+			}
+		}
+		if !hasData {
+			return 0, 0, 0, 1.0, "unknown"
+		}
+	}
+
+	// 计算5日平均换手率
+	if n >= 5 {
+		sum := 0.0
+		count := 0
+		for i := n - 5; i < n; i++ {
+			if data[i].Turnover > 0 {
+				sum += data[i].Turnover
+				count++
+			}
+		}
+		if count > 0 {
+			avg5d = sum / float64(count)
+		}
+	} else {
+		// 数据不足5天，使用现有数据
+		sum := 0.0
+		count := 0
+		for i := 0; i < n; i++ {
+			if data[i].Turnover > 0 {
+				sum += data[i].Turnover
+				count++
+			}
+		}
+		if count > 0 {
+			avg5d = sum / float64(count)
+		}
+	}
+
+	// 计算20日平均换手率
+	if n >= 20 {
+		sum := 0.0
+		count := 0
+		for i := n - 20; i < n; i++ {
+			if data[i].Turnover > 0 {
+				sum += data[i].Turnover
+				count++
+			}
+		}
+		if count > 0 {
+			avg20d = sum / float64(count)
+		}
+	} else {
+		// 数据不足20天，使用现有数据
+		sum := 0.0
+		count := 0
+		for i := 0; i < n; i++ {
+			if data[i].Turnover > 0 {
+				sum += data[i].Turnover
+				count++
+			}
+		}
+		if count > 0 {
+			avg20d = sum / float64(count)
+		}
+	}
+
+	// 计算换手率比率（当前/5日均值）
+	if avg5d > 0 {
+		ratio = current / avg5d
+	} else {
+		ratio = 1.0
+	}
+
+	// 判断换手率水平
+	// 参考标准：
+	// - 极低：< 1%
+	// - 低：1-3%
+	// - 正常：3-7%
+	// - 高：7-15%
+	// - 极高：> 15%
+	if current < 1.0 {
+		level = "极低"
+	} else if current < 3.0 {
+		level = "低"
+	} else if current < 7.0 {
+		level = "正常"
+	} else if current < 15.0 {
+		level = "高"
+	} else {
+		level = "极高"
+	}
+
+	return current, avg5d, avg20d, ratio, level
 }

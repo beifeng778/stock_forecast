@@ -9,13 +9,14 @@ type Stock struct {
 
 // KlineData K线数据
 type KlineData struct {
-	Date   string  `json:"date"`
-	Open   float64 `json:"open"`
-	Close  float64 `json:"close"`
-	High   float64 `json:"high"`
-	Low    float64 `json:"low"`
-	Volume float64 `json:"volume"`
-	Amount float64 `json:"amount"`
+	Date     string  `json:"date"`
+	Open     float64 `json:"open"`
+	Close    float64 `json:"close"`
+	High     float64 `json:"high"`
+	Low      float64 `json:"low"`
+	Volume   float64 `json:"volume"`
+	Amount   float64 `json:"amount"`
+	Turnover float64 `json:"turnover"` // 换手率（%）
 }
 
 // KlineResponse K线响应
@@ -88,4 +89,10 @@ type TechnicalIndicators struct {
 	RelativeStrength   float64 `json:"relative_strength"`    // 相对大盘强度（个股涨幅-大盘涨幅）
 	Beta               float64 `json:"beta"`                 // Beta系数（个股与大盘的相关性）
 	FollowIndex        bool    `json:"follow_index"`         // 是否跟随大盘（Beta>0.8）
+	// 换手率指标
+	CurrentTurnover    float64 `json:"current_turnover"`     // 当前换手率（%）
+	AvgTurnover5D      float64 `json:"avg_turnover_5d"`      // 5日平均换手率（%）
+	AvgTurnover20D     float64 `json:"avg_turnover_20d"`     // 20日平均换手率（%）
+	TurnoverRatio      float64 `json:"turnover_ratio"`       // 换手率比率（当前/5日均值）
+	TurnoverLevel      string  `json:"turnover_level"`       // 换手率水平：low/normal/high/extreme
 }

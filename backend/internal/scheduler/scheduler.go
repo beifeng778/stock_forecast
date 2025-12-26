@@ -204,7 +204,8 @@ func refreshWithRetry(maxRetry, intervalMinutes int) {
 			log.Println("开始刷新股票缓存...")
 		}
 
-		if _, err := stockdata.RefreshStockCache(); err != nil {
+		stocks, err := stockdata.RefreshStockCache()
+		if err != nil {
 			log.Printf("刷新股票缓存失败: %v", err)
 			if i < maxRetry {
 				log.Printf("将在 %d 分钟后重试", intervalMinutes)
@@ -223,6 +224,31 @@ func refreshWithRetry(maxRetry, intervalMinutes int) {
 					log.Printf("预热大盘指数 %s 成功", indexCode)
 				}
 			}
+
+			// 预热常用股票K线数据（包含换手率）
+			log.Println("开始预热常用股票K线数据...")
+			prewarmStocks := getPrewarmStockList(stocks)
+			successCount := 0
+			failCount := 0
+
+			for i, stock := range prewarmStocks {
+				// 每10只股票休息1秒，避免请求过快被风控
+				if i > 0 && i%10 == 0 {
+					time.Sleep(1 * time.Second)
+				}
+
+				if _, err := stockdata.GetKlineWithRefresh(stock.Code, "daily", true); err != nil {
+					log.Printf("预热股票 %s(%s) 失败: %v", stock.Code, stock.Name, err)
+					failCount++
+				} else {
+					successCount++
+					if (i+1)%50 == 0 {
+						log.Printf("已预热 %d/%d 只股票...", i+1, len(prewarmStocks))
+					}
+				}
+			}
+
+			log.Printf("股票K线预热完成，成功: %d，失败: %d", successCount, failCount)
 
 			return
 		}
@@ -361,8 +387,88 @@ func executePostMarketUpdate() error {
 		}
 	}
 
+	// 3. 预热常用股票K线数据（包含换手率）
+	log.Println("开始预热常用股票K线数据...")
+	prewarmStocks := getPrewarmStockList(stocks)
+	successCount := 0
+	failCount := 0
+
+	for i, stock := range prewarmStocks {
+		// 每10只股票休息1秒，避免请求过快被风控
+		if i > 0 && i%10 == 0 {
+			time.Sleep(1 * time.Second)
+		}
+
+		if _, err := stockdata.GetKlineWithRefresh(stock.Code, "daily", true); err != nil {
+			log.Printf("预热股票 %s(%s) 失败: %v", stock.Code, stock.Name, err)
+			failCount++
+		} else {
+			successCount++
+			if (i+1)%50 == 0 {
+				log.Printf("已预热 %d/%d 只股票...", i+1, len(prewarmStocks))
+			}
+		}
+	}
+
+	log.Printf("股票K线预热完成，成功: %d，失败: %d", successCount, failCount)
+
 	duration := time.Since(start)
 	log.Printf("收盘后全量刷新完成，耗时: %v，更新股票数量: %d", duration, len(stocks))
 
 	return nil
+}
+
+// getPrewarmStockList 获取需要预热的股票列表
+func getPrewarmStockList(allStocks []stockdata.Stock) []stockdata.Stock {
+	// 读取环境变量配置
+	prewarmMode := os.Getenv("PREWARM_MODE")
+	if prewarmMode == "" {
+		prewarmMode = "none" // 默认不预热
+	}
+
+	switch prewarmMode {
+	case "all":
+		// 预热所有股票（慎用，可能需要很长时间）
+		log.Printf("预热模式: 全部股票 (%d只)", len(allStocks))
+		return allStocks
+
+	case "major":
+		// 预��主要指数成分股（沪深300、创业板50等）
+		// 这里简化处理：预热前500只股票（按代码排序）
+		limit := 500
+		if len(allStocks) < limit {
+			limit = len(allStocks)
+		}
+		log.Printf("预热模式: 主要股票 (前%d只)", limit)
+		return allStocks[:limit]
+
+	case "custom":
+		// 从环境变量读取自定义股票列表
+		customCodes := os.Getenv("PREWARM_STOCK_CODES")
+		if customCodes == "" {
+			log.Println("预热模式: 自定义，但未配置股票列表，跳过预热")
+			return []stockdata.Stock{}
+		}
+
+		codes := strings.Split(customCodes, ",")
+		var result []stockdata.Stock
+		stockMap := make(map[string]stockdata.Stock)
+		for _, s := range allStocks {
+			stockMap[s.Code] = s
+		}
+
+		for _, code := range codes {
+			code = strings.TrimSpace(code)
+			if stock, ok := stockMap[code]; ok {
+				result = append(result, stock)
+			}
+		}
+		log.Printf("预热模式: 自定义 (%d只)", len(result))
+		return result
+
+	default:
+		// 不预热
+		log.Println("预热模式: 关闭")
+		return []stockdata.Stock{}
+	}
 }

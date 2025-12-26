@@ -41,6 +41,12 @@ export interface TechnicalIndicators {
   boll_upper: number;
   boll_middle: number;
   boll_lower: number;
+  // 换手率指标
+  current_turnover?: number;
+  avg_turnover_5d?: number;
+  avg_turnover_20d?: number;
+  turnover_ratio?: number;
+  turnover_level?: string;
 }
 
 // 技术信号
