@@ -203,9 +203,11 @@ func normalizeKlineDate(s string) string {
 func getKlineFromSina(code, period string) ([]KlineData, error) {
 	// 确定市场前缀
 	var symbol string
-	if strings.HasPrefix(code, "6") {
+	if strings.HasPrefix(code, "6") || code == "000001" {
+		// 6开头的是上海股票，000001是上证指数
 		symbol = "sh" + code
 	} else {
+		// 其他都是深圳市场（包括399006创业板指）
 		symbol = "sz" + code
 	}
 
@@ -287,9 +289,11 @@ func getKlineFromSina(code, period string) ([]KlineData, error) {
 func getKlineFromEM(code, period string) ([]KlineData, error) {
 	// 确定市场代码
 	var secid string
-	if strings.HasPrefix(code, "6") {
+	if strings.HasPrefix(code, "6") || code == "000001" {
+		// 6开头的是上海股票，000001是上证指数
 		secid = "1." + code
 	} else {
+		// 其他都是深圳市场（包括399006创业板指）
 		secid = "0." + code
 	}
 
@@ -358,4 +362,23 @@ func getKlineFromEM(code, period string) ([]KlineData, error) {
 	}
 
 	return result, nil
+}
+
+// GetIndexKline 获取大盘指数K线数据
+// 根据股票代码自动选择对应的指数：
+// - 688/689/600/601/603开头 -> 上证指数(000001.SH)
+// - 000/001/002/003/300/301开头 -> 创业板指(399006.SZ)
+func GetIndexKline(stockCode string, period string) (*KlineResponse, error) {
+	// 根据股票代码选择对应的指数
+	var indexCode string
+	if strings.HasPrefix(stockCode, "000") || strings.HasPrefix(stockCode, "001") ||
+		strings.HasPrefix(stockCode, "002") || strings.HasPrefix(stockCode, "003") ||
+		strings.HasPrefix(stockCode, "300") || strings.HasPrefix(stockCode, "301") {
+		indexCode = "399006" // 创业板指（去掉.SZ后缀）
+	} else {
+		indexCode = "000001" // 上证指数（去掉.SH后缀）
+	}
+
+	// 使用现有的GetKline函数获取指数数据
+	return GetKline(indexCode, period)
 }

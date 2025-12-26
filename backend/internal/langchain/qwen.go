@@ -1097,7 +1097,7 @@ func AnalyzeStock(code, name string, indicators model.TechnicalIndicators, ml mo
 // buildAnalysisPrompt 构建分析提示词
 func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators, ml model.MLPredictions, signals []model.Signal, news []NewsItem) string {
 	// 分类整理信号
-	var technicalSignals, volumeSignals, marketSignals []string
+	var technicalSignals, volumeSignals, marketSignals, indexSignals []string
 
 	for _, s := range signals {
 		switch s.Name {
@@ -1105,8 +1105,10 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 			technicalSignals = append(technicalSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
 		case "成交量", "量价":
 			volumeSignals = append(volumeSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
-		case "市场", "波动":
+		case "市场", "波动", "突破", "动量", "情绪", "主力成本", "筹码":
 			marketSignals = append(marketSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
+		case "大盘", "相对强度", "Beta":
+			indexSignals = append(indexSignals, fmt.Sprintf("%s: %s", s.Name, s.TypeCN))
 		}
 	}
 
@@ -1116,6 +1118,27 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 		for i, n := range news {
 			newsStr += fmt.Sprintf("%d. [%s] %s\n", i+1, n.Time, n.Title)
 		}
+	}
+
+	// 大盘影响分析
+	indexStr := ""
+	if indicators.IndexCode != "" {
+		indexStr = fmt.Sprintf(`
+
+【大盘影响分析】
+• 参考指数：%s, 当日涨跌：%.2f%%
+• 大盘趋势：%s
+• 相对强度：%.2f%% (个股相对大盘的强弱)
+• Beta系数：%.2f (%s)
+• 大盘信号：%s`,
+			indicators.IndexCode,
+			indicators.IndexChange,
+			getMarketTrendCN(indicators.IndexTrend),
+			indicators.RelativeStrength,
+			indicators.Beta,
+			getBetaDesc(indicators.Beta),
+			joinStrings(indexSignals),
+		)
 	}
 
 	return fmt.Sprintf(`请深度分析股票 %s（%s）的投资价值和风险：
@@ -1155,7 +1178,7 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 
 **成交量配合**：分析量价关系，是否存在背离信号
 
-**市场环境影响**：当前市场趋势对个股的影响
+**市场环境影响**：当前市场趋势对个股的影响%s
 
 **风险提示**：关键支撑阻力位，止损建议
 
@@ -1184,6 +1207,7 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 		getTrendCN(ml.Prophet.Trend), ml.Prophet.Confidence*100, ml.Prophet.Price,
 		getTrendCN(ml.XGBoost.Trend), ml.XGBoost.Confidence*100, ml.XGBoost.Price,
 		newsStr,
+		indexStr, // 添加大盘影响分析
 	)
 }
 
@@ -1271,6 +1295,16 @@ func getVolatilityDesc(volatility float64) string {
 		return "低波动"
 	}
 	return "正常波动"
+}
+
+// getBetaDesc 获取Beta系数描述
+func getBetaDesc(beta float64) string {
+	if beta > 1.2 {
+		return "高波动股，涨跌幅大于大盘"
+	} else if beta < 0.8 {
+		return "低波动股，涨跌幅小于大盘"
+	}
+	return "跟随大盘"
 }
 
 // joinStrings 连接字符串数组

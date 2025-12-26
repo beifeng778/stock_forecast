@@ -425,6 +425,97 @@ const PredictionCard: React.FC<{ result: PredictResult }> = ({ result }) => {
   );
 };
 
+// 平滑进度Hook
+const useSmoothProgress = (
+  targetPercent: number,
+  isActive: boolean,
+  persistedProgress: number,
+  onProgressChange: (progress: number) => void
+) => {
+  const [smoothPercent, setSmoothPercent] = useState(persistedProgress);
+  const animationRef = useRef<number | null>(null);
+  const lastTargetRef = useRef(targetPercent);
+  const lastUpdateTimeRef = useRef(Date.now());
+  const isInitializedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isActive) {
+      setSmoothPercent(0);
+      lastTargetRef.current = 0;
+      lastUpdateTimeRef.current = Date.now();
+      isInitializedRef.current = false;
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      onProgressChange(0);
+      return;
+    }
+
+    // 首次激活时，从持久化的进度开始（支持刷新恢复）
+    if (!isInitializedRef.current) {
+      isInitializedRef.current = true;
+      setSmoothPercent(persistedProgress);
+      lastTargetRef.current = targetPercent;
+      lastUpdateTimeRef.current = Date.now();
+    }
+
+    const animate = () => {
+      const now = Date.now();
+      const elapsed = now - lastUpdateTimeRef.current;
+
+      setSmoothPercent((current) => {
+        // 如果目标进度更新了（后端返回新进度）
+        if (targetPercent > lastTargetRef.current) {
+          lastTargetRef.current = targetPercent;
+          lastUpdateTimeRef.current = now;
+          // 快速追上新的目标进度
+          onProgressChange(targetPercent);
+          return targetPercent;
+        }
+
+        // 如果当前进度已经达到或超过目标进度
+        if (current >= targetPercent) {
+          // 在两次后端更新之间，缓慢模拟进度增长
+          // 每秒增长约0.5%，避免进度条停滞
+          const simulatedGrowth = (elapsed / 1000) * 0.5;
+          const nextPercent = Math.min(current + simulatedGrowth, 99.5);
+
+          // 如果接近100%，停止模拟增长
+          if (nextPercent >= 99.5) {
+            return current;
+          }
+
+          lastUpdateTimeRef.current = now;
+          onProgressChange(nextPercent);
+          return nextPercent;
+        }
+
+        // 平滑追赶目标进度（使用缓动函数）
+        const diff = targetPercent - current;
+        const step = diff * 0.1; // 每帧追赶10%的差距
+        const nextPercent = current + Math.max(step, 0.1);
+        const finalPercent = Math.min(nextPercent, targetPercent);
+
+        onProgressChange(finalPercent);
+        return finalPercent;
+      });
+
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [targetPercent, isActive, onProgressChange]);
+
+  return smoothPercent;
+};
+
 const PredictionPanel: React.FC = () => {
   const {
     predictions,
@@ -433,15 +524,25 @@ const PredictionPanel: React.FC = () => {
     predictMeta,
     predictProgress,
     selectedStocks,
+    smoothProgress,
+    setSmoothProgress,
   } = useStockStore();
 
-  const progressPercent =
+  const targetPercent =
     predictInProgress && predictProgress && predictProgress.total > 0
       ? Math.min(
           100,
           Math.max(0, (predictProgress.done / predictProgress.total) * 100)
         )
       : 0;
+
+  // 使用平滑进度
+  const progressPercent = useSmoothProgress(
+    targetPercent,
+    predictInProgress,
+    smoothProgress,
+    setSmoothProgress
+  );
 
   const progressText =
     predictInProgress && predictMeta

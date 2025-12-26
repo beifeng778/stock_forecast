@@ -66,4 +66,26 @@ type TechnicalIndicators struct {
 	VolumeBreakout bool    `json:"volume_breakout"`  // 成交量突破确认
 	PriceAccel     float64 `json:"price_accel"`      // 价格加速度
 	MomentumScore  float64 `json:"momentum_score"`   // 综合动量评分
+	// 情绪指标
+	Amplitude          float64 `json:"amplitude"`            // 振幅（当日）
+	AvgAmplitude5D     float64 `json:"avg_amplitude_5d"`     // 5日平均振幅
+	UpperShadowRatio   float64 `json:"upper_shadow_ratio"`   // 上影线比率
+	LowerShadowRatio   float64 `json:"lower_shadow_ratio"`   // 下影线比率
+	ContinuousDays     int     `json:"continuous_days"`      // 连续涨跌天数（正数涨，负数跌）
+	SentimentStrength  float64 `json:"sentiment_strength"`   // 情绪强度（0-100）
+	SentimentType      string  `json:"sentiment_type"`       // 情绪类型：bullish/bearish/neutral/panic/frenzy
+	// 主力成本指标
+	MainForceCost20    float64 `json:"main_force_cost_20"`   // 20日主力成本（VWAP）
+	MainForceCost60    float64 `json:"main_force_cost_60"`   // 60日主力成本（VWAP）
+	CostDeviation20    float64 `json:"cost_deviation_20"`    // 当前价与20日成本偏离度（%）
+	CostDeviation60    float64 `json:"cost_deviation_60"`    // 当前价与60日成本偏离度（%）
+	ChipConcentration  float64 `json:"chip_concentration"`   // 筹码集中度（0-1，越大越集中）
+	MainForceProfit    float64 `json:"main_force_profit"`    // 主力浮盈（%，基于20日成本）
+	// 大盘影响指标
+	IndexCode          string  `json:"index_code"`           // 参考指数代码（000001.SH/399006.SZ）
+	IndexChange        float64 `json:"index_change"`         // 大盘当日涨跌幅（%）
+	IndexTrend         string  `json:"index_trend"`          // 大盘趋势：bull/bear/sideways
+	RelativeStrength   float64 `json:"relative_strength"`    // 相对大盘强度（个股涨幅-大盘涨幅）
+	Beta               float64 `json:"beta"`                 // Beta系数（个股与大盘的相关性）
+	FollowIndex        bool    `json:"follow_index"`         // 是否跟随大盘（Beta>0.8）
 }

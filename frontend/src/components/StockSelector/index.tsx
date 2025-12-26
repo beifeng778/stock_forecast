@@ -144,6 +144,9 @@ const StockSelector: React.FC = () => {
         setPredictMeta(null);
         setPredictProgress(null);
         setCurrentTaskId(null);
+        // 清除平滑进度
+        const { setSmoothProgress } = useStockStore.getState();
+        setSmoothProgress(0);
       });
   }, [
     predictInProgress,

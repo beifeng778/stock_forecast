@@ -352,7 +352,7 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 		klineForAnalysis = klineForAnalysis[:len(klineForAnalysis)-1]
 	}
 
-	indicators, err := stockdata.CalculateIndicators(klineForAnalysis)
+	indicators, err := stockdata.CalculateIndicatorsWithIndex(code, klineForAnalysis)
 	if err != nil {
 		return nil, fmt.Errorf("获取技术指标失败: %v", err)
 	}
@@ -365,7 +365,7 @@ func predictSingleStock(code, period string, isBatch bool) (*model.PredictResult
 
 	var indicatorsForTodayPred *stockdata.Indicators
 	if hasTodayData && len(kline.Data) >= 2 {
-		indicatorsForTodayPred, _ = stockdata.CalculateIndicators(kline.Data[:len(kline.Data)-1])
+		indicatorsForTodayPred, _ = stockdata.CalculateIndicatorsWithIndex(code, kline.Data[:len(kline.Data)-1])
 	}
 
 	techIndicators := convertIndicators(indicators)
@@ -907,6 +907,52 @@ func convertIndicators(ind *stockdata.Indicators) model.TechnicalIndicators {
 		BOLL_U: ind.BollUpper,
 		BOLL_M: ind.BollMiddle,
 		BOLL_L: ind.BollLower,
+		// 动量指标
+		Change1D:  ind.Change1D,
+		Change5D:  ind.Change5D,
+		Change10D: ind.Change10D,
+		MA5Slope:  ind.MA5Slope,
+		// 成交量指标
+		CurrentVolume:   ind.CurrentVolume,
+		VolumeMA5:       ind.VolumeMA5,
+		VolumeMA10:      ind.VolumeMA10,
+		VolumeRatio:     ind.VolumeRatio,
+		PriceVolumeDiv:  ind.PriceVolumeDiv,
+		VolumeStrength:  ind.VolumeStrength,
+		// 动态阈值
+		RSIUpperThreshold: ind.RSIUpperThreshold,
+		RSILowerThreshold: ind.RSILowerThreshold,
+		// 市场环境
+		MarketTrend:   ind.MarketTrend,
+		Volatility:    ind.Volatility,
+		TrendStrength: ind.TrendStrength,
+		// 突破信号
+		BollBreakout:   ind.BollBreakout,
+		VolumeBreakout: ind.VolumeBreakout,
+		PriceAccel:     ind.PriceAccel,
+		MomentumScore:  ind.MomentumScore,
+		// 情绪指标
+		Amplitude:         ind.Amplitude,
+		AvgAmplitude5D:    ind.AvgAmplitude5D,
+		UpperShadowRatio:  ind.UpperShadowRatio,
+		LowerShadowRatio:  ind.LowerShadowRatio,
+		ContinuousDays:    ind.ContinuousDays,
+		SentimentStrength: ind.SentimentStrength,
+		SentimentType:     ind.SentimentType,
+		// 主力成本指标
+		MainForceCost20:   ind.MainForceCost20,
+		MainForceCost60:   ind.MainForceCost60,
+		CostDeviation20:   ind.CostDeviation20,
+		CostDeviation60:   ind.CostDeviation60,
+		ChipConcentration: ind.ChipConcentration,
+		MainForceProfit:   ind.MainForceProfit,
+		// 大盘影响指标
+		IndexCode:        ind.IndexCode,
+		IndexChange:      ind.IndexChange,
+		IndexTrend:       ind.IndexTrend,
+		RelativeStrength: ind.RelativeStrength,
+		Beta:             ind.Beta,
+		FollowIndex:      ind.FollowIndex,
 	}
 }
 

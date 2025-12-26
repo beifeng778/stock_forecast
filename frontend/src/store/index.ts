@@ -82,6 +82,10 @@ interface StockStore {
     } | null
   ) => void;
 
+  // 平滑进度（前端显示的进度，用于刷新恢复）
+  smoothProgress: number;
+  setSmoothProgress: (progress: number) => void;
+
   // 当前任务ID（用于取消预测）
   currentTaskId: string | null;
   setCurrentTaskId: (taskId: string | null) => void;
@@ -189,6 +193,7 @@ export const useStockStore = create<StockStore>()(
           predictInProgress: false,
           predictMeta: null,
           predictProgress: null,
+          smoothProgress: 0,
           currentTaskId: null,
         });
       },
@@ -196,6 +201,7 @@ export const useStockStore = create<StockStore>()(
         set({
           predictions: [],
           predictedCodes: [],
+          smoothProgress: 0,
           currentTaskId: null,
         }),
 
@@ -209,6 +215,9 @@ export const useStockStore = create<StockStore>()(
 
       predictProgress: null,
       setPredictProgress: (progress) => set({ predictProgress: progress }),
+
+      smoothProgress: 0,
+      setSmoothProgress: (progress) => set({ smoothProgress: progress }),
 
       currentTaskId: null,
       setCurrentTaskId: (taskId) => set({ currentTaskId: taskId }),
@@ -249,6 +258,7 @@ export const useStockStore = create<StockStore>()(
           predictInProgress: false,
           predictMeta: null,
           predictProgress: null,
+          smoothProgress: 0,
           currentTaskId: null,
           tradeFormData: { quantity: 100 },
           tradeResult: null,
@@ -266,6 +276,7 @@ export const useStockStore = create<StockStore>()(
         predictInProgress: state.predictInProgress,
         predictMeta: state.predictMeta,
         predictProgress: state.predictProgress,
+        smoothProgress: state.smoothProgress,
         currentTaskId: state.currentTaskId,
         tradeFormData: state.tradeFormData,
         tradeResult: state.tradeResult,

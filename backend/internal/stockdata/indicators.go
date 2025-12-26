@@ -2,6 +2,7 @@ package stockdata
 
 import (
 	"fmt"
+	"log"
 	"math"
 )
 
@@ -49,6 +50,28 @@ type Indicators struct {
 	VolumeBreakout bool    `json:"volume_breakout"`  // 成交量突破确认
 	PriceAccel     float64 `json:"price_accel"`      // 价格加速度
 	MomentumScore  float64 `json:"momentum_score"`   // 综合动量评分
+	// 情绪指标
+	Amplitude          float64 `json:"amplitude"`            // 振幅（当日）
+	AvgAmplitude5D     float64 `json:"avg_amplitude_5d"`     // 5日平均振幅
+	UpperShadowRatio   float64 `json:"upper_shadow_ratio"`   // 上影线比率
+	LowerShadowRatio   float64 `json:"lower_shadow_ratio"`   // 下影线比率
+	ContinuousDays     int     `json:"continuous_days"`      // 连续涨跌天数（正数涨，负数跌）
+	SentimentStrength  float64 `json:"sentiment_strength"`   // 情绪强度（0-100）
+	SentimentType      string  `json:"sentiment_type"`       // 情绪类型：bullish/bearish/neutral/panic/frenzy
+	// 主力成本指标
+	MainForceCost20    float64 `json:"main_force_cost_20"`   // 20日主力成本（VWAP）
+	MainForceCost60    float64 `json:"main_force_cost_60"`   // 60日主力成本（VWAP）
+	CostDeviation20    float64 `json:"cost_deviation_20"`    // 当前价与20日成本偏离度（%）
+	CostDeviation60    float64 `json:"cost_deviation_60"`    // 当前价与60日成本偏离度（%）
+	ChipConcentration  float64 `json:"chip_concentration"`   // 筹码集中度（0-1，越大越集中）
+	MainForceProfit    float64 `json:"main_force_profit"`    // 主力浮盈（%，基于20日成本）
+	// 大盘影响指标
+	IndexCode          string  `json:"index_code"`           // 参考指数代码（000001.SH/399006.SZ）
+	IndexChange        float64 `json:"index_change"`         // 大盘当日涨跌幅（%）
+	IndexTrend         string  `json:"index_trend"`          // 大盘趋势：bull/bear/sideways
+	RelativeStrength   float64 `json:"relative_strength"`    // 相对大盘强度（个股涨幅-大盘涨幅）
+	Beta               float64 `json:"beta"`                 // Beta系数（个股与大盘的相关性）
+	FollowIndex        bool    `json:"follow_index"`         // 是否跟随大盘（Beta>0.8）
 }
 
 // Signal 信号
@@ -153,6 +176,19 @@ func CalculateIndicators(data []KlineData) (*Indicators, error) {
 	ind.VolumeBreakout = detectVolumeBreakout(volumes, ind.VolumeRatio)
 	ind.PriceAccel = calculatePriceAcceleration(closes)
 	ind.MomentumScore = calculateMomentumScore(ind)
+
+	// 计算情绪指标
+	ind.Amplitude, ind.AvgAmplitude5D = calculateAmplitude(data)
+	ind.UpperShadowRatio, ind.LowerShadowRatio = calculateShadowRatios(data)
+	ind.ContinuousDays = calculateContinuousDays(closes)
+	ind.SentimentStrength, ind.SentimentType = calculateSentiment(ind, data)
+
+	// 计算主力成本指标
+	ind.MainForceCost20, ind.MainForceCost60 = calculateMainForceCost(data)
+	ind.CostDeviation20 = calculateCostDeviation(ind.CurrentPrice, ind.MainForceCost20)
+	ind.CostDeviation60 = calculateCostDeviation(ind.CurrentPrice, ind.MainForceCost60)
+	ind.ChipConcentration = calculateChipConcentration(data)
+	ind.MainForceProfit = calculateCostDeviation(ind.CurrentPrice, ind.MainForceCost20)
 
 	// 生成信号
 	ind.Signals = generateSignals(ind)
@@ -488,6 +524,80 @@ func generateSignals(ind *Indicators) []Signal {
 		signals = append(signals, Signal{Name: "动量", Type: "bearish", Desc: fmt.Sprintf("弱势(%.0f分)", ind.MomentumScore)})
 	} else {
 		signals = append(signals, Signal{Name: "动量", Type: "neutral", Desc: fmt.Sprintf("中性(%.0f分)", ind.MomentumScore)})
+	}
+
+	// 情绪信号
+	switch ind.SentimentType {
+	case "panic":
+		signals = append(signals, Signal{Name: "情绪", Type: "bullish", Desc: fmt.Sprintf("恐慌(强度%.0f)", ind.SentimentStrength)})
+	case "frenzy":
+		signals = append(signals, Signal{Name: "情绪", Type: "bearish", Desc: fmt.Sprintf("狂热(强度%.0f)", ind.SentimentStrength)})
+	case "bullish":
+		signals = append(signals, Signal{Name: "情绪", Type: "bullish", Desc: fmt.Sprintf("乐观(强度%.0f)", ind.SentimentStrength)})
+	case "bearish":
+		signals = append(signals, Signal{Name: "情绪", Type: "bearish", Desc: fmt.Sprintf("悲观(强度%.0f)", ind.SentimentStrength)})
+	default:
+		signals = append(signals, Signal{Name: "情绪", Type: "neutral", Desc: "平稳"})
+	}
+
+	// 主力成本信号
+	if ind.CostDeviation20 > 20 {
+		signals = append(signals, Signal{Name: "主力成本", Type: "bearish", Desc: fmt.Sprintf("获利盘较重(+%.1f%%)", ind.CostDeviation20)})
+	} else if ind.CostDeviation20 > 10 {
+		signals = append(signals, Signal{Name: "主力成本", Type: "neutral", Desc: fmt.Sprintf("主力浮盈(+%.1f%%)", ind.CostDeviation20)})
+	} else if ind.CostDeviation20 > 0 {
+		signals = append(signals, Signal{Name: "主力成本", Type: "bullish", Desc: fmt.Sprintf("主力小幅浮盈(+%.1f%%)", ind.CostDeviation20)})
+	} else if ind.CostDeviation20 > -10 {
+		signals = append(signals, Signal{Name: "主力成本", Type: "bullish", Desc: fmt.Sprintf("接近成本区(%.1f%%)", ind.CostDeviation20)})
+	} else {
+		signals = append(signals, Signal{Name: "主力成本", Type: "bullish", Desc: fmt.Sprintf("主力被套(%.1f%%)", ind.CostDeviation20)})
+	}
+
+	// 筹码集中度信号
+	if ind.ChipConcentration > 0.7 {
+		signals = append(signals, Signal{Name: "筹码", Type: "bullish", Desc: fmt.Sprintf("高度集中(%.2f)", ind.ChipConcentration)})
+	} else if ind.ChipConcentration > 0.5 {
+		signals = append(signals, Signal{Name: "筹码", Type: "neutral", Desc: fmt.Sprintf("中度集中(%.2f)", ind.ChipConcentration)})
+	} else {
+		signals = append(signals, Signal{Name: "筹码", Type: "neutral", Desc: fmt.Sprintf("较分散(%.2f)", ind.ChipConcentration)})
+	}
+
+	// 大盘影响信号
+	log.Printf("[DEBUG][signals] IndexCode=%s, IndexChange=%.2f, IndexTrend=%s", ind.IndexCode, ind.IndexChange, ind.IndexTrend)
+	if ind.IndexCode != "" {
+		// 大盘趋势信号
+		switch ind.IndexTrend {
+		case "bull":
+			signals = append(signals, Signal{Name: "大盘", Type: "bullish", Desc: fmt.Sprintf("牛市(+%.2f%%)", ind.IndexChange)})
+		case "bear":
+			signals = append(signals, Signal{Name: "大盘", Type: "bearish", Desc: fmt.Sprintf("熊市(%.2f%%)", ind.IndexChange)})
+		default:
+			if ind.IndexChange > 1 {
+				signals = append(signals, Signal{Name: "大盘", Type: "bullish", Desc: fmt.Sprintf("震荡偏强(+%.2f%%)", ind.IndexChange)})
+			} else if ind.IndexChange < -1 {
+				signals = append(signals, Signal{Name: "大盘", Type: "bearish", Desc: fmt.Sprintf("震荡偏弱(%.2f%%)", ind.IndexChange)})
+			} else {
+				signals = append(signals, Signal{Name: "大盘", Type: "neutral", Desc: fmt.Sprintf("震荡(%.2f%%)", ind.IndexChange)})
+			}
+		}
+
+		// 相对强度信号
+		if ind.RelativeStrength > 2 {
+			signals = append(signals, Signal{Name: "相对强度", Type: "bullish", Desc: fmt.Sprintf("强于大盘(+%.2f%%)", ind.RelativeStrength)})
+		} else if ind.RelativeStrength < -2 {
+			signals = append(signals, Signal{Name: "相对强度", Type: "bearish", Desc: fmt.Sprintf("弱于大盘(%.2f%%)", ind.RelativeStrength)})
+		} else {
+			signals = append(signals, Signal{Name: "相对强度", Type: "neutral", Desc: fmt.Sprintf("跟随大盘(%.2f%%)", ind.RelativeStrength)})
+		}
+
+		// Beta系数信号
+		if ind.Beta > 1.2 {
+			signals = append(signals, Signal{Name: "Beta", Type: "neutral", Desc: fmt.Sprintf("高波动(%.2f)", ind.Beta)})
+		} else if ind.Beta < 0.8 {
+			signals = append(signals, Signal{Name: "Beta", Type: "neutral", Desc: fmt.Sprintf("低波动(%.2f)", ind.Beta)})
+		} else {
+			signals = append(signals, Signal{Name: "Beta", Type: "neutral", Desc: fmt.Sprintf("跟随大盘(%.2f)", ind.Beta)})
+		}
 	}
 
 	return signals
@@ -895,4 +1005,373 @@ func calculateMomentumScore(ind *Indicators) float64 {
 	}
 
 	return score
+}
+
+// calculateAmplitude 计算振幅
+func calculateAmplitude(data []KlineData) (current, avg5d float64) {
+	if len(data) == 0 {
+		return 0, 0
+	}
+
+	// 当日振幅 = (最高价 - 最低价) / 昨收 * 100
+	n := len(data)
+	lastDay := data[n-1]
+	if n >= 2 {
+		prevClose := data[n-2].Close
+		if prevClose > 0 {
+			current = (lastDay.High - lastDay.Low) / prevClose * 100
+		}
+	}
+
+	// 5日平均振幅
+	if n >= 5 {
+		sum := 0.0
+		for i := n - 5; i < n; i++ {
+			if i > 0 && data[i-1].Close > 0 {
+				amp := (data[i].High - data[i].Low) / data[i-1].Close * 100
+				sum += amp
+			}
+		}
+		avg5d = sum / 5.0
+	}
+
+	return current, avg5d
+}
+
+// calculateShadowRatios 计算上下影线比率
+func calculateShadowRatios(data []KlineData) (upper, lower float64) {
+	if len(data) == 0 {
+		return 0, 0
+	}
+
+	lastDay := data[len(data)-1]
+	bodyHigh := math.Max(lastDay.Open, lastDay.Close)
+	bodyLow := math.Min(lastDay.Open, lastDay.Close)
+	totalRange := lastDay.High - lastDay.Low
+
+	if totalRange > 0 {
+		// 上影线比率 = 上影线长度 / 总振幅
+		upper = (lastDay.High - bodyHigh) / totalRange
+		// 下影线比率 = 下影线长度 / 总振幅
+		lower = (bodyLow - lastDay.Low) / totalRange
+	}
+
+	return upper, lower
+}
+
+// calculateContinuousDays 计算连续涨跌天数
+func calculateContinuousDays(closes []float64) int {
+	if len(closes) < 2 {
+		return 0
+	}
+
+	n := len(closes)
+	count := 0
+	lastChange := closes[n-1] - closes[n-2]
+
+	// 从最后一天往前遍历
+	for i := n - 1; i > 0; i-- {
+		change := closes[i] - closes[i-1]
+		// 判断涨跌方向是否一致
+		if (lastChange > 0 && change > 0) || (lastChange < 0 && change < 0) {
+			if lastChange > 0 {
+				count++
+			} else {
+				count--
+			}
+		} else {
+			break
+		}
+	}
+
+	return count
+}
+
+// calculateSentiment 计算情绪指标
+func calculateSentiment(ind *Indicators, data []KlineData) (strength float64, sentimentType string) {
+	if len(data) == 0 {
+		return 50, "neutral"
+	}
+
+	score := 0.0
+
+	// 1. 振幅因子（30%权重）- 振幅越大情绪越强
+	if ind.Amplitude > ind.AvgAmplitude5D*2 {
+		score += 30 // 异常放大
+	} else if ind.Amplitude > ind.AvgAmplitude5D*1.5 {
+		score += 20
+	} else if ind.Amplitude > ind.AvgAmplitude5D {
+		score += 10
+	}
+
+	// 2. 连续涨跌因子（25%权重）
+	absDays := math.Abs(float64(ind.ContinuousDays))
+	if absDays >= 5 {
+		score += 25 // 连续5天以上，情绪极端
+	} else if absDays >= 3 {
+		score += 15
+	} else if absDays >= 2 {
+		score += 10
+	}
+
+	// 3. 影线因子（20%权重）- 长上影线或长下影线表示情绪分歧
+	maxShadow := math.Max(ind.UpperShadowRatio, ind.LowerShadowRatio)
+	if maxShadow > 0.4 {
+		score += 20 // 长影线，情绪分歧大
+	} else if maxShadow > 0.3 {
+		score += 10
+	}
+
+	// 4. 成交量因子（25%权重）
+	if ind.VolumeRatio > 3.0 {
+		score += 25 // 巨量，情绪极端
+	} else if ind.VolumeRatio > 2.0 {
+		score += 15
+	} else if ind.VolumeRatio > 1.5 {
+		score += 10
+	}
+
+	strength = math.Min(100, score)
+
+	// 判断情绪类型
+	lastDay := data[len(data)-1]
+	changePercent := (lastDay.Close - lastDay.Open) / lastDay.Open * 100
+
+	// 恐慌：大跌+巨量+长下影线
+	if changePercent < -5 && ind.VolumeRatio > 2.0 && ind.LowerShadowRatio > 0.3 {
+		sentimentType = "panic"
+	} else if changePercent > 7 && ind.VolumeRatio > 2.5 && ind.Amplitude > ind.AvgAmplitude5D*1.5 {
+		// 狂热：大涨+巨量+大振幅
+		sentimentType = "frenzy"
+	} else if ind.ContinuousDays >= 3 || changePercent > 3 {
+		sentimentType = "bullish"
+	} else if ind.ContinuousDays <= -3 || changePercent < -3 {
+		sentimentType = "bearish"
+	} else {
+		sentimentType = "neutral"
+	}
+
+	return strength, sentimentType
+}
+
+// calculateMainForceCost 计算主力成本（历史低价法）
+// 理论依据：主力建仓在底部区域，成本接近历史低价
+// cost20 ≈ 过去90天最低价 × 1.15（短期主力成本，假设在底部上方15%建仓）
+// cost60 ≈ 过去180天最低价 × 1.18（中长期主力成本，假设在底部上方18%建仓）
+func calculateMainForceCost(data []KlineData) (cost20, cost60 float64) {
+	n := len(data)
+	if n == 0 {
+		return 0, 0
+	}
+
+	// 短期主力成本：过去90天最低价 × 1.15
+	period20 := min(90, n)
+	if period20 >= 20 {
+		lows := make([]float64, period20)
+		for i := 0; i < period20; i++ {
+			lows[i] = data[n-period20+i].Low
+		}
+		minLow := minSlice(lows)
+		cost20 = minLow * 1.15 // 假设主力在底部上方15%建仓
+	} else {
+		// 数据太少，使用当前价的80%作为估计
+		cost20 = data[n-1].Close * 0.8
+	}
+
+	// 中长期主力成本：过去180天最低价 × 1.18
+	period60 := min(180, n)
+	if period60 >= 60 {
+		lows := make([]float64, period60)
+		for i := 0; i < period60; i++ {
+			lows[i] = data[n-period60+i].Low
+		}
+		minLow := minSlice(lows)
+		cost60 = minLow * 1.18 // 假设主力在底部上方18%建仓
+	} else if period60 >= 20 {
+		// 数据不足180天，使用短期成本
+		cost60 = cost20
+	} else {
+		// 数据太少，使用当前价的75%作为估计
+		cost60 = data[n-1].Close * 0.75
+	}
+
+	return cost20, cost60
+}
+
+// calculateCostDeviation 计算成本偏离度
+func calculateCostDeviation(currentPrice, cost float64) float64 {
+	if cost == 0 {
+		return 0
+	}
+	return (currentPrice - cost) / cost * 100
+}
+
+// calculateChipConcentration 计算筹码集中度
+func calculateChipConcentration(data []KlineData) float64 {
+	n := len(data)
+	if n < 20 {
+		return 0.5 // 默认中等集中度
+	}
+
+	// 使用最近20天的价格分布计算集中度
+	period := min(60, n)
+	prices := make([]float64, period)
+	volumes := make([]float64, period)
+
+	for i := 0; i < period; i++ {
+		idx := n - period + i
+		// 使用典型价格
+		prices[i] = (data[idx].High + data[idx].Low + data[idx].Close) / 3
+		volumes[i] = data[idx].Volume
+	}
+
+	// 计算成交量加权的价格标准差
+	var sumPV, sumV float64
+	for i := 0; i < period; i++ {
+		sumPV += prices[i] * volumes[i]
+		sumV += volumes[i]
+	}
+	avgPrice := sumPV / sumV
+
+	var sumSquares float64
+	for i := 0; i < period; i++ {
+		diff := prices[i] - avgPrice
+		sumSquares += diff * diff * volumes[i]
+	}
+	stdDev := math.Sqrt(sumSquares / sumV)
+
+	// 标准差越小，筹码越集中
+	// 将标准差转换为0-1的集中度（标准差相对于均价的比例）
+	relativeStdDev := stdDev / avgPrice
+	concentration := 1.0 / (1.0 + relativeStdDev*10) // 归一化到0-1
+
+	return concentration
+}
+
+// CalculateIndicatorsWithIndex 计算包含大盘影响的技术指标
+func CalculateIndicatorsWithIndex(stockCode string, data []KlineData) (*Indicators, error) {
+	// 先计算基础指标
+	ind, err := CalculateIndicators(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取大盘数据
+	indexKline, err := GetIndexKline(stockCode, "daily")
+	if err != nil {
+		log.Printf("获取大盘数据失败 (股票: %s): %v", stockCode, err)
+		return ind, nil
+	}
+	if indexKline == nil || len(indexKline.Data) == 0 {
+		log.Printf("大盘数据为空 (股票: %s)", stockCode)
+		return ind, nil
+	}
+
+	// 计算大盘影响指标
+	calculateIndexInfluence(ind, data, indexKline.Data, indexKline.Code)
+	log.Printf("大盘影响计算完成 (股票: %s, 指数: %s, 涨跌: %.2f%%)", stockCode, ind.IndexCode, ind.IndexChange)
+
+	// 重新生成信号（包含大盘影响信号）
+	ind.Signals = generateSignals(ind)
+
+	return ind, nil
+}
+
+// calculateIndexInfluence 计算大盘影响指标
+func calculateIndexInfluence(ind *Indicators, stockData []KlineData, indexData []KlineData, indexCode string) {
+	if len(stockData) == 0 || len(indexData) == 0 {
+		return
+	}
+
+	ind.IndexCode = indexCode
+
+	// 1. 计算大盘当日涨跌幅
+	if len(indexData) >= 2 {
+		lastIndex := indexData[len(indexData)-1]
+		prevIndex := indexData[len(indexData)-2]
+		if prevIndex.Close > 0 {
+			ind.IndexChange = (lastIndex.Close - prevIndex.Close) / prevIndex.Close * 100
+		}
+	}
+
+	// 2. 计算大盘趋势（使用MA5和MA20）
+	if len(indexData) >= 20 {
+		indexCloses := make([]float64, len(indexData))
+		for i, d := range indexData {
+			indexCloses[i] = d.Close
+		}
+		indexMA5 := calculateMA(indexCloses, 5)
+		indexMA20 := calculateMA(indexCloses, 20)
+
+		if indexMA5 > indexMA20*1.02 {
+			ind.IndexTrend = "bull" // 牛市
+		} else if indexMA5 < indexMA20*0.98 {
+			ind.IndexTrend = "bear" // 熊市
+		} else {
+			ind.IndexTrend = "sideways" // 震荡
+		}
+	}
+
+	// 3. 计算相对强度（个股涨幅 - 大盘涨幅）
+	if len(stockData) >= 2 && ind.IndexChange != 0 {
+		lastStock := stockData[len(stockData)-1]
+		prevStock := stockData[len(stockData)-2]
+		if prevStock.Close > 0 {
+			stockChange := (lastStock.Close - prevStock.Close) / prevStock.Close * 100
+			ind.RelativeStrength = stockChange - ind.IndexChange
+		}
+	}
+
+	// 4. 计算Beta系数（个股与大盘的相关性）
+	ind.Beta = calculateBeta(stockData, indexData)
+	ind.FollowIndex = ind.Beta > 0.8
+}
+
+// calculateBeta 计算Beta系数
+func calculateBeta(stockData []KlineData, indexData []KlineData) float64 {
+	// 使用最近20天的数据计算Beta
+	period := min(20, min(len(stockData), len(indexData)))
+	if period < 10 {
+		return 1.0 // 数据不足，返回默认值
+	}
+
+	// 计算收益率
+	stockReturns := make([]float64, period-1)
+	indexReturns := make([]float64, period-1)
+
+	for i := 1; i < period; i++ {
+		stockIdx := len(stockData) - period + i
+		indexIdx := len(indexData) - period + i
+
+		if stockData[stockIdx-1].Close > 0 {
+			stockReturns[i-1] = (stockData[stockIdx].Close - stockData[stockIdx-1].Close) / stockData[stockIdx-1].Close
+		}
+		if indexData[indexIdx-1].Close > 0 {
+			indexReturns[i-1] = (indexData[indexIdx].Close - indexData[indexIdx-1].Close) / indexData[indexIdx-1].Close
+		}
+	}
+
+	// 计算协方差和方差
+	var stockMean, indexMean float64
+	for i := 0; i < len(stockReturns); i++ {
+		stockMean += stockReturns[i]
+		indexMean += indexReturns[i]
+	}
+	stockMean /= float64(len(stockReturns))
+	indexMean /= float64(len(indexReturns))
+
+	var covariance, indexVariance float64
+	for i := 0; i < len(stockReturns); i++ {
+		stockDiff := stockReturns[i] - stockMean
+		indexDiff := indexReturns[i] - indexMean
+		covariance += stockDiff * indexDiff
+		indexVariance += indexDiff * indexDiff
+	}
+
+	if indexVariance == 0 {
+		return 1.0
+	}
+
+	beta := covariance / indexVariance
+	return beta
 }

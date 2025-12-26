@@ -212,6 +212,18 @@ func refreshWithRetry(maxRetry, intervalMinutes int) {
 			}
 		} else {
 			log.Println("股票缓存刷新完成")
+
+			// 预热大盘指数数据
+			log.Println("开始预热大盘指数数据...")
+			indexCodes := []string{"000001.SH", "399006.SZ"} // 上证指数、创业板指
+			for _, indexCode := range indexCodes {
+				if _, err := stockdata.GetKlineWithRefresh(indexCode, "daily", true); err != nil {
+					log.Printf("预热大盘指数 %s 失败: %v", indexCode, err)
+				} else {
+					log.Printf("预热大盘指数 %s 成功", indexCode)
+				}
+			}
+
 			return
 		}
 	}
@@ -332,10 +344,21 @@ func executePostMarketUpdate() error {
 	start := time.Now()
 	log.Println("开始执行收盘后全量数据刷新...")
 
-	// 直接调用全量刷新股票缓存，这样更高效且避免风控
+	// 1. 刷新股票列表缓存
 	stocks, err := stockdata.RefreshStockCache()
 	if err != nil {
 		return fmt.Errorf("收盘后全量刷新失败: %v", err)
+	}
+
+	// 2. 预热大盘指数数据
+	log.Println("开始预热大盘指数数据...")
+	indexCodes := []string{"000001.SH", "399006.SZ"} // 上证指数、创业板指
+	for _, indexCode := range indexCodes {
+		if _, err := stockdata.GetKlineWithRefresh(indexCode, "daily", true); err != nil {
+			log.Printf("预热大盘指数 %s 失败: %v", indexCode, err)
+		} else {
+			log.Printf("预热大盘指数 %s 成功", indexCode)
+		}
 	}
 
 	duration := time.Since(start)
