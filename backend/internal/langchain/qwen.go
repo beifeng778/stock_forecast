@@ -1188,8 +1188,8 @@ func buildAnalysisPrompt(code, name string, indicators model.TechnicalIndicators
 	newsStr := ""
 	if len(news) > 0 {
 		newsStr = "\n\n最新公告/新闻（请重点分析这些消息对股价的潜在影响）：\n"
-		for i, n := range news {
-			newsStr += fmt.Sprintf("%d. [%s] %s\n", i+1, n.Time, n.Title)
+		for _, n := range news {
+			newsStr += fmt.Sprintf("• [%s] %s\n", n.Time, n.Title)
 		}
 	}
 

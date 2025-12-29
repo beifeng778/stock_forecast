@@ -1347,102 +1347,16 @@ func calculateTargetPrices(currentPrice float64, trend string, confidence float6
 // generateNewsAnalysis 生成消息面分析
 func generateNewsAnalysis(newsImpact langchain.NewsImpact, news []langchain.NewsItem) string {
 	if len(news) == 0 {
-		return "**消息面分析**\n\n暂无重要公告或新闻消息。"
+		return "**最新消息**\n\n暂无重要公告或新闻消息。"
 	}
 
-	// 构建消息面分析
-	analysis := "**消息面分析**\n\n"
-
-	// 新闻影响评估
-	if newsImpact.ImportanceLevel > 1 {
-		var sentiment string
-		var impactDesc string
-
-		// 情感倾向描述
-		if newsImpact.SentimentScore > 0.6 {
-			sentiment = "**利好**"
-		} else if newsImpact.SentimentScore > 0.2 {
-			sentiment = "**偏利好**"
-		} else if newsImpact.SentimentScore < -0.6 {
-			sentiment = "**利空**"
-		} else if newsImpact.SentimentScore < -0.2 {
-			sentiment = "**偏利空**"
-		} else {
-			sentiment = "**中性**"
-		}
-
-		// 重要性等级描述
-		switch newsImpact.ImportanceLevel {
-		case 5:
-			impactDesc = "极重要"
-		case 4:
-			impactDesc = "很重要"
-		case 3:
-			impactDesc = "重要"
-		case 2:
-			impactDesc = "较重要"
-		default:
-			impactDesc = "一般"
-		}
-
-		// 预期价格影响
-		priceImpactPercent := newsImpact.PriceImpact * 100
-		var priceImpactDesc string
-		if math.Abs(priceImpactPercent) >= 5 {
-			priceImpactDesc = "显著"
-		} else if math.Abs(priceImpactPercent) >= 2 {
-			priceImpactDesc = "中等"
-		} else {
-			priceImpactDesc = "轻微"
-		}
-
-		analysis += fmt.Sprintf("**影响评估**：%s消息，重要性等级%s，预期对股价产生%s影响。\n\n- 综合判断：该消息面将可能对股价产生%s驱动，请结合技术信号确认节奏。\n\n",
-			sentiment, impactDesc, priceImpactDesc,
-			func() string {
-				if newsImpact.PriceImpact > 0 {
-					return "上行"
-				} else if newsImpact.PriceImpact < 0 {
-					return "下行"
-				}
-				return "有限"
-			}())
-	}
-
-	// 最新消息列表
-	analysis += "\n**最新消息**：\n\n"
+	// 只展示最新消息列表，不做模板化分析
+	analysis := "**最新消息**\n\n"
 	for i, n := range news {
-		if i >= 3 { // 只显示前3条
+		if i >= 5 { // 显示前5条
 			break
 		}
-		analysis += fmt.Sprintf("- %s %s\n", n.Time, n.Title)
-	}
-
-	// 投资建议
-	if newsImpact.ImportanceLevel >= 3 {
-		analysis += "\n**投资提示**：\n"
-		if newsImpact.SentimentScore > 0.5 {
-			analysis += "- 重要利好消息可能推动股价上涨，建议关注放量突破。\n"
-			analysis += "- 注意消息兑现后的获利回吐风险。"
-		} else if newsImpact.SentimentScore < -0.5 {
-			analysis += "- 重要利空消息可能施压股价，建议谨慎操作。\n"
-			analysis += "- 关注是否出现超跌反弹机会。"
-		} else {
-			analysis += "- 消息面影响相对中性，以技术面分析为主。"
-		}
-	} else {
-		priceImpactAbs := math.Abs(newsImpact.PriceImpact)
-		analysis += "\n**投资提示**：\n"
-		if priceImpactAbs >= 0.03 {
-			if newsImpact.SentimentScore > 0.2 {
-				analysis += "- 消息面对股价可能产生一定驱动，可结合技术信号择机参与。\n"
-			} else if newsImpact.SentimentScore < -0.2 {
-				analysis += "- 消息面或对股价造成阶段性压力，关注量价是否出现企稳迹象。\n"
-			} else {
-				analysis += "- 消息面影响为中性，建议结合技术面信号确认方向。\n"
-			}
-		} else {
-			analysis += "- 消息面影响有限，建议重点关注技术面信号。"
-		}
+		analysis += fmt.Sprintf("- [%s] %s\n", n.Time, n.Title)
 	}
 
 	return analysis

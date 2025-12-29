@@ -243,18 +243,18 @@ const TradeSimulator: React.FC = () => {
     dateStr: string,
     priceType: "open" | "close"
   ): number | null => {
-    // 先从预测K线中查找
-    const predKlines = predictionKlines[code] || [];
-    const predKline = predKlines.find((k) => k.date === dateStr);
-    if (predKline) {
-      return priceType === "open" ? predKline.open : predKline.close;
-    }
-
-    // 再从历史K线中查找
+    // 优先从历史K线中查找（实际值更准确）
     const histKlines = historyKlinesRef.current[code] || [];
     const histKline = histKlines.find((k) => k.date === dateStr);
     if (histKline) {
       return priceType === "open" ? histKline.open : histKline.close;
+    }
+
+    // 历史数据中没有，再从预测K线中查找
+    const predKlines = predictionKlines[code] || [];
+    const predKline = predKlines.find((k) => k.date === dateStr);
+    if (predKline) {
+      return priceType === "open" ? predKline.open : predKline.close;
     }
 
     return null;
